@@ -97,8 +97,70 @@ async fn extract_document_snippet(file_path: String) -> Result<String, String> {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PromptConfig {
+    pub system_prompt: String,
+    pub prompt_template: String,
+    pub model: String,
+    pub temperature: f32,
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            system_prompt: "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.".to_string(),
+            prompt_template: "Target extension: .{extension}\nDocument content snippet:\n\"\"\"\n{text_snippet}\n\"\"\"\nSuggested filename:".to_string(),
+            model: "qwen2.5-coder:7b".to_string(),
+            temperature: 0.2,
+        }
+    }
+}
+
+fn get_config_path() -> std::path::PathBuf {
+    // Check current working directory, then relative to exe, fallback to default in pwd
+    let local = Path::new("config.json");
+    if local.exists() {
+        return local.to_path_buf();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join("config.json");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    local.to_path_buf()
+}
+
+fn load_prompt_config() -> PromptConfig {
+    let path = get_config_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(cfg) = serde_json::from_str::<PromptConfig>(&content) {
+            return cfg;
+        }
+    }
+    let default_cfg = PromptConfig::default();
+    let _ = fs::write(&path, serde_json::to_string_pretty(&default_cfg).unwrap_or_default());
+    default_cfg
+}
+
+#[tauri::command]
+fn get_prompt_config() -> Result<PromptConfig, String> {
+    Ok(load_prompt_config())
+}
+
+#[tauri::command]
+fn save_prompt_config(config: PromptConfig) -> Result<(), String> {
+    let path = get_config_path();
+    let data = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    fs::write(&path, data).map_err(|e| format!("Failed to write config file to {:?}: {}", path, e))?;
+    Ok(())
+}
+
 /// 2. Suggests a standardized filename (e.g. YYYY-MM-DD_Topic.extension)
-/// by contacting local Ollama instance (localhost:11434). Accepts an optional model name.
+/// by contacting local Ollama instance (localhost:11434). Uses configuration from config.json.
 #[tauri::command]
 async fn suggest_filename_with_ollama(
     text_snippet: String,
@@ -106,14 +168,16 @@ async fn suggest_filename_with_ollama(
     model: Option<String>,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
-    let selected_model = model.unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
+    let config = load_prompt_config();
 
-    let system_prompt = "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.".to_string();
+    let selected_model = model.unwrap_or(config.model);
+    let system_prompt = config.system_prompt;
 
-    let prompt = format!(
-        "Target extension: .{}\nDocument content snippet:\n\"\"\"\n{}\n\"\"\"\nSuggested filename:",
-        extension, text_snippet
-    );
+    // Substitute placeholders {extension} and {text_snippet} in prompt_template
+    let prompt = config
+        .prompt_template
+        .replace("{extension}", &extension)
+        .replace("{text_snippet}", &text_snippet);
 
     let payload = OllamaGenerateRequest {
         model: selected_model,
@@ -219,7 +283,9 @@ fn main() {
             scan_folder,
             extract_document_snippet,
             suggest_filename_with_ollama,
-            rename_file
+            rename_file,
+            get_prompt_config,
+            save_prompt_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

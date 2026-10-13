@@ -24,14 +24,72 @@
       </div>
       <div class="header-actions">
         <button id="btn-select-folder" class="btn secondary">Choose Folder</button>
+        <button id="btn-prompt-settings" class="btn secondary" title="Edit AI Prompts & Config">Prompt Settings ⚙️</button>
         <button id="btn-process-all" class="btn secondary" title="Run AI snippet extraction & suggestions for all pending files">Process Queue</button>
         <button id="btn-approve-all" class="btn primary" disabled>Approve All Ready</button>
       </div>
     </header>
 
-    <main class="three-pane-layout">
+    <!-- Prompt Settings Modal -->
+    <div id="prompt-modal" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>Prompt Configuration (config.json)</h3>
+          <button id="btn-close-modal" class="btn-icon">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-hint">Edits are saved directly to <code>config.json</code> in your project directory.</p>
+          <div class="field-group">
+            <label for="cfg-system-prompt">System Prompt</label>
+            <textarea id="cfg-system-prompt" rows="4" placeholder="System prompt..."></textarea>
+          </div>
+          <div class="field-group">
+            <label for="cfg-prompt-template">User Prompt Template (use <code>{extension}</code> and <code>{text_snippet}</code>)</label>
+            <textarea id="cfg-prompt-template" rows="5" placeholder="Prompt template..."></textarea>
+          </div>
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label for="cfg-model">Default Model</label>
+              <input type="text" id="cfg-model" placeholder="e.g. qwen2.5-coder:7b" />
+            </div>
+            <div class="field-group flex-1">
+              <label for="cfg-temperature-num">Temperature (0.00 - 1.00)</label>
+              <div class="slider-control">
+                <input
+                  type="range"
+                  id="cfg-temperature-slider"
+                  min="0.00"
+                  max="1.00"
+                  step="0.01"
+                  value="0.20"
+                  class="dark-slider"
+                />
+                <input
+                  type="number"
+                  id="cfg-temperature-num"
+                  min="0.00"
+                  max="1.00"
+                  step="0.01"
+                  value="0.20"
+                  class="dark-number-input"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-reset-prompt" class="btn secondary">Reset to Default</button>
+          <div class="modal-footer-right">
+            <button id="btn-cancel-modal" class="btn secondary">Cancel</button>
+            <button id="btn-save-modal" class="btn primary">Save Config</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main class="three-pane-layout" id="main-layout">
       <!-- Left Column: Queue -->
-      <section class="pane pane-queue" aria-label="File Queue">
+      <section class="pane pane-queue" id="pane-left" aria-label="File Queue">
         <div class="pane-header">
           <h2>Queue</h2>
           <span id="queue-count" class="badge">0 files</span>
@@ -45,8 +103,11 @@
         </ul>
       </section>
 
+      <!-- Resizer 1 -->
+      <div class="resizer" id="resizer-left" title="Drag to resize Queue"></div>
+
       <!-- Center Column: Triage Zone -->
-      <section class="pane pane-triage" aria-label="Triage Zone">
+      <section class="pane pane-triage" id="pane-center" aria-label="Triage Zone">
         <div class="pane-header">
           <h2>Triage Zone</h2>
           <span id="active-status" class="status-badge pending">No Selection</span>
@@ -77,8 +138,11 @@
         </div>
       </section>
 
+      <!-- Resizer 2 -->
+      <div class="resizer" id="resizer-right" title="Drag to resize Preview"></div>
+
       <!-- Right Column: Document Preview -->
-      <section class="pane pane-preview" aria-label="Document Preview">
+      <section class="pane pane-preview" id="pane-right" aria-label="Document Preview">
         <div class="pane-header">
           <h2>Preview & Details</h2>
         </div>

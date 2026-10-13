@@ -55,14 +55,33 @@ Tauri on Linux requires webkit2gtk and development libraries:
 ### 4. Ollama (Local AI Engine)
 MagicRenamer connects to Ollama running locally at `http://localhost:11434`.
 1. Install [Ollama](https://ollama.com/).
-2. Pull the model used for suggestions (e.g., `llama3:8b`):
+2. Pull the model used for suggestions (e.g., `qwen2.5-coder:7b` or `llama3:8b`):
    ```bash
-   ollama pull llama3:8b
+   ollama pull qwen2.5-coder:7b
    ```
 3. Ensure the Ollama service is running:
    ```bash
    ollama serve
    ```
+
+---
+
+## Configuration & Prompt Tuning
+
+Prompt settings are managed through [`config.json`](file:///home/isojanis/development/magicRenamer/config.json) in the project root:
+
+```json
+{
+  "system_prompt": "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.",
+  "prompt_template": "Target extension: .{extension}\nDocument content snippet:\n\"\"\"\n{text_snippet}\n\"\"\"\nSuggested filename:",
+  "model": "qwen2.5-coder:7b",
+  "temperature": 0.2
+}
+```
+
+You can adjust prompts in two ways:
+1. **Directly in `config.json`**: Edit with any text editor at any time. Changes apply on subsequent triage runs.
+2. **From the UI**: Click the **"Prompt Settings ⚙️"** button in the header bar to open the in-app configuration editor.
 
 ---
 

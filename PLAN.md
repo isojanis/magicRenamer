@@ -37,8 +37,10 @@ The Rust backend is responsible for file ingestion, text extraction, and coordin
 
 1. `scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, String>`: Recursively scans a directory for supported document formats (`pdf`, `docx`, `xlsx`, `doc`, `xls`, `txt`, `md`, `csv`) with metadata.
 2. `extract_document_snippet(file_path: String) -> Result<String, String>`: Determines the file extension, extracts text using the appropriate parser, and truncates it to 1000 characters.
-3. `suggest_filename_with_ollama(text_snippet: String, extension: String, model: Option<String>) -> Result<String, String>`: Posts the text snippet and a strict system prompt to the local Ollama API to generate a standardized filename.
-4. `rename_file(old_path: String, new_path: String) -> Result<(), String>`: Safely renames the file on the local filesystem.
+3. `suggest_filename_with_ollama(text_snippet: String, extension: String, model: Option<String>) -> Result<String, String>`: Posts the text snippet and system prompt loaded from `config.json` to the local Ollama API to generate a standardized filename.
+4. `rename_file(old_path: String, new_path: String) -> Result<String, String>`: Safely renames the file on the local filesystem with collision handling.
+5. `get_prompt_config() -> Result<PromptConfig, String>`: Loads the current prompt template, system prompt, and model from `config.json`.
+6. `save_prompt_config(config: PromptConfig) -> Result<(), String>`: Persists modified prompts and parameters to `config.json`.
 
 ## 4. Frontend Architecture (UI/UX)
 
