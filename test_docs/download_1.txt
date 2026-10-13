@@ -1,0 +1,7 @@
+Invoice Number: INV-2026-0812
+Date: August 12, 2026
+Vendor: CloudScale Infrastructure Inc.
+Customer: IsoJanis Development Lab
+Description: Enterprise GPU Compute Cluster Usage for July 2026
+Total Due: $450.00
+Payment Status: Paid

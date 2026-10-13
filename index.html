@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MagicRenamer</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="logo">
+        <span class="magic-icon">✨</span>
+        <strong>MagicRenamer</strong>
+      </div>
+      <div class="header-settings">
+        <label for="select-ollama-model">Model:</label>
+        <select id="select-ollama-model" class="model-select">
+          <option value="qwen2.5-coder:7b" selected>qwen2.5-coder:7b</option>
+          <option value="qwen2.5-coder:14b">qwen2.5-coder:14b</option>
+          <option value="deepseek-r1:7b">deepseek-r1:7b</option>
+          <option value="deepseek-r1:14b">deepseek-r1:14b</option>
+          <option value="llama3:8b">llama3:8b</option>
+        </select>
+      </div>
+      <div class="header-actions">
+        <button id="btn-select-folder" class="btn secondary">Choose Folder</button>
+        <button id="btn-process-all" class="btn secondary" title="Run AI snippet extraction & suggestions for all pending files">Process Queue</button>
+        <button id="btn-approve-all" class="btn primary" disabled>Approve All Ready</button>
+      </div>
+    </header>
+
+    <main class="three-pane-layout">
+      <!-- Left Column: Queue -->
+      <section class="pane pane-queue" aria-label="File Queue">
+        <div class="pane-header">
+          <h2>Queue</h2>
+          <span id="queue-count" class="badge">0 files</span>
+        </div>
+        <div id="drop-zone" class="drop-zone">
+          <p>Drag & drop folder or files here</p>
+          <small>or click "Choose Folder" above</small>
+        </div>
+        <ul id="file-queue-list" class="file-list">
+          <!-- Queue items dynamically rendered -->
+        </ul>
+      </section>
+
+      <!-- Center Column: Triage Zone -->
+      <section class="pane pane-triage" aria-label="Triage Zone">
+        <div class="pane-header">
+          <h2>Triage Zone</h2>
+          <span id="active-status" class="status-badge pending">No Selection</span>
+        </div>
+        <div class="triage-body">
+          <div class="field-group">
+            <label for="input-original-name">Original Name</label>
+            <input type="text" id="input-original-name" readonly />
+          </div>
+
+          <div class="field-group">
+            <label for="input-suggested-name">Suggested New Name</label>
+            <div class="input-with-button">
+              <input type="text" id="input-suggested-name" placeholder="Waiting for AI suggestion..." />
+              <button id="btn-regen-ai" class="btn small" title="Re-generate suggestion">Regenerate</button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="text-snippet">Extracted Document Snippet</label>
+            <textarea id="text-snippet" rows="8" readonly placeholder="Document snippet will appear here..."></textarea>
+          </div>
+
+          <div class="triage-actions">
+            <button id="btn-skip" class="btn secondary">Skip</button>
+            <button id="btn-approve" class="btn primary" title="Press Enter to approve">Approve & Rename (Enter)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Document Preview -->
+      <section class="pane pane-preview" aria-label="Document Preview">
+        <div class="pane-header">
+          <h2>Preview & Details</h2>
+        </div>
+        <div id="preview-container" class="preview-container">
+          <div id="preview-content" class="preview-content">
+            <div class="preview-empty">Select a file to inspect details</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

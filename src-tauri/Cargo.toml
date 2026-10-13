@@ -1,0 +1,22 @@
+[package]
+name = "magic-renamer"
+version = "0.1.0"
+description = "MagicRenamer - Local AI document triaging and renaming"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+pdf-extract = "0.7"
+office_oxide = "0.1"
+tokio = { version = "1", features = ["full"] }
+walkdir = "2.5"
