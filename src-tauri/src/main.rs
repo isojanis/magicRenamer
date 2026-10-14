@@ -1,8 +1,10 @@
 use office_oxide::Document;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 use walkdir::WalkDir;
 
 #[derive(Serialize)]
@@ -11,6 +13,13 @@ struct OllamaGenerateRequest {
     prompt: String,
     system: String,
     stream: bool,
+    format: serde_json::Value,
+    options: OllamaOptions,
+}
+
+#[derive(Serialize)]
+struct OllamaOptions {
+    temperature: f32,
 }
 
 #[derive(Deserialize)]
@@ -87,7 +96,13 @@ async fn extract_document_snippet(file_path: String) -> Result<String, String> {
         _ => return Err(format!("Unsupported file extension: .{}", ext)),
     };
 
-    let snippet = smart_excerpt(&ext, &full_text);
+    let mut snippet = smart_excerpt(&ext, &full_text);
+    let original_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    if let Some(date) = find_document_date(&full_text, original_name) {
+        if !snippet.contains(&date) {
+            snippet = format!("Document date: {}\n{}", date, snippet);
+        }
+    }
 
     if snippet.is_empty() {
         Err("No readable text found in document".into())
@@ -213,167 +228,483 @@ pub struct FilenameSuggestion {
     pub reason: String,
 }
 
-/// Creates a compact, local-only directory blueprint for the selected folder.
+/// Summarizes the selected folder without assuming its files share a document type.
 #[cfg_attr(feature = "desktop", tauri::command)]
 fn build_directory_blueprint(folder_path: String) -> Result<String, String> {
     let root = Path::new(&folder_path);
     if !root.is_dir() {
         return Err(format!("Directory does not exist or is not a folder: {}", folder_path));
     }
-    let mut names = Vec::new();
-    let mut history_paths = Vec::new();
-    let mut extension_counts: HashMap<String, usize> = HashMap::new();
-    for entry in fs::read_dir(root).map_err(|e| format!("Failed to read directory: {}", e))? {
-        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
-        let path = entry.path();
-        if !path.is_file() { continue; }
-        if let Some(ext) = path.extension().and_then(|value| value.to_str()) {
-            *extension_counts.entry(ext.to_ascii_lowercase()).or_default() += 1;
+    let mut visible_files = 0usize;
+    let mut date_prefixed = 0usize;
+    for entry in fs::read_dir(root).map_err(|error| format!("Failed to read directory: {}", error))? {
+        let entry = entry.map_err(|error| format!("Failed to read directory entry: {}", error))?;
+        if !entry.path().is_file() {
+            continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("rename_history_") && name.ends_with(".json") {
-            history_paths.push(path);
-        } else if !name.starts_with('.') {
-            names.push(name);
+        if name.starts_with('.') || name.starts_with("rename_history_") {
+            continue;
+        }
+        visible_files += 1;
+        if has_iso_date_prefix(&name) {
+            date_prefixed += 1;
         }
     }
-    names.sort_by_key(|name| name.to_lowercase());
-    names.truncate(20);
+    Ok(format!(
+        "Selected folder: {}. {} visible files; {} already start with YYYY-MM-DD. Files in this folder may be unrelated. Use each target document to determine its own date, subject, and type. Matching sibling names are supplied separately for that target.",
+        root.file_name().and_then(|name| name.to_str()).unwrap_or("(root)"),
+        visible_files,
+        date_prefixed
+    ))
+}
 
-    let mut categories: HashMap<String, usize> = HashMap::new();
-    let mut prior_names = Vec::new();
-    for path in history_paths {
-        if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(mappings) = value.get("mappings").and_then(|v| v.as_array()) {
-                    for mapping in mappings {
-                        if let Some(name) = mapping.get("current_name").and_then(|v| v.as_str()) {
-                            prior_names.push(name.to_string());
-                        }
-                        if let Some(category) = mapping.get("category").and_then(|v| v.as_str()) {
-                            *categories.entry(category.to_string()).or_default() += 1;
-                        }
-                    }
-                }
+fn has_iso_date_prefix(name: &str) -> bool {
+    let stem = Path::new(name).file_stem().and_then(|value| value.to_str()).unwrap_or(name);
+    let bytes = stem.as_bytes();
+    bytes.len() >= 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
+        && (bytes.len() == 10 || matches!(bytes[10], b'_' | b'-' | b' '))
+}
+
+fn context_tokens(text: &str) -> HashSet<String> {
+    const COMMON: &[&str] = &[
+        "invoice", "lasku", "receipt", "report", "document", "download", "scan",
+        "untitled", "date", "due", "number", "total", "paid", "file", "the",
+        "and", "from", "with", "pdf", "docx", "ry", "eur", "reference",
+    ];
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() >= 3 && !token.chars().all(char::is_numeric))
+        .map(str::to_lowercase)
+        .filter(|token| !COMMON.contains(&token.as_str()))
+        .collect()
+}
+
+fn document_kind(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    if lower.contains("invoice") || lower.contains("lasku") {
+        Some("invoice")
+    } else if lower.contains("receipt") || lower.contains("kuitti") {
+        Some("receipt")
+    } else if lower.contains("contract") || lower.contains("agreement") || lower.contains("sopimus") {
+        Some("contract")
+    } else if lower.contains("report") || lower.contains("raportti") {
+        Some("report")
+    } else if lower.contains("meeting") || lower.contains("minutes") || lower.contains("muistio") {
+        Some("meeting")
+    } else {
+        None
+    }
+}
+
+fn relevant_sibling_names(file_path: &Path, snippet: &str) -> Vec<String> {
+    let Some(parent) = file_path.parent() else { return Vec::new(); };
+    let original_name = file_path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    let Some(target_kind) = document_kind(snippet).or_else(|| document_kind(original_name)) else {
+        return Vec::new();
+    };
+    let mut target_tokens = context_tokens(snippet);
+    target_tokens.extend(context_tokens(original_name));
+    let Ok(entries) = fs::read_dir(parent) else { return Vec::new(); };
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == original_name || name.starts_with('.') || name.starts_with("rename_history_") {
+            continue;
+        }
+        if document_kind(&name) != Some(target_kind) {
+            continue;
+        }
+        let sibling_tokens = context_tokens(&name);
+        let overlap = sibling_tokens.intersection(&target_tokens).count();
+        if overlap >= 2 {
+            matches.push((overlap, name));
+        }
+    }
+    matches.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+    matches.into_iter().take(8).map(|(_, name)| name).collect()
+}
+
+fn dominant_invoice_label(names: &[String]) -> Option<&'static str> {
+    let mut finnish = 0usize;
+    let mut english = 0usize;
+    for name in names {
+        let lower = name.to_lowercase();
+        let words: Vec<_> = lower.split(|character: char| !character.is_alphanumeric()).collect();
+        if words.iter().any(|word| word.ends_with("lasku")) {
+            finnish += 1;
+        }
+        if words.contains(&"invoice") {
+            english += 1;
+        }
+    }
+    if finnish >= 2 && finnish > english {
+        Some("Lasku")
+    } else if english >= 2 && english > finnish {
+        Some("Invoice")
+    } else {
+        None
+    }
+}
+
+const UNIVERSAL_NAMING_INSTRUCTIONS: &str = "Name the target document from its own contents. If a reliable full document date is provided, new_name must start with YYYY-MM-DD_. Put the subject or organization before the document type when both are known. Use the full organization name from the target when available. Use underscores between fields. Do not invent a date, organization, or document type. Never return a generic name such as download, scan, file, document, invoice, or lasku alone. These requirements and the JSON response format override conflicting instructions earlier in this system prompt. Return only a JSON object with string fields new_name, category, and reason. Keep the original file extension.";
+const FOLDER_CONTEXT_INSTRUCTIONS: &str = "A folder can contain unrelated documents. Use only sibling names explicitly identified as relevant to this target. Matching siblings can guide spelling and category wording for the same kind of document; never copy their dates or subjects into unrelated files. The target document determines its date, subject, and type.";
+
+fn numeric_date_regex() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| Regex::new(r"(?:(20\d{2})[-./](\d{1,2})[-./](\d{1,2})|(\d{1,2})[./-](\d{1,2})[./-](20\d{2}))").unwrap())
+}
+
+fn month_date_regex() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| Regex::new(r"(?i)(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})").unwrap())
+}
+
+fn finnish_month_date_regex() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| Regex::new(r"(?i)(\d{1,2})\.?\s+(tammikuuta|helmikuuta|maaliskuuta|huhtikuuta|toukokuuta|kesäkuuta|heinäkuuta|elokuuta|syyskuuta|lokakuuta|marraskuuta|joulukuuta|tammikuu|helmikuu|maaliskuu|huhtikuu|toukokuu|kesäkuu|heinäkuu|elokuu|syyskuu|lokakuu|marraskuu|joulukuu)\s+(20\d{2})").unwrap())
+}
+
+fn calendar_date(year: u32, month: u32, day: u32) -> Option<String> {
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => return None,
+    };
+    (day >= 1 && day <= days).then(|| format!("{:04}-{:02}-{:02}", year, month, day))
+}
+
+fn date_mentions(text: &str) -> Vec<(String, usize)> {
+    let mut mentions = Vec::new();
+    for capture in numeric_date_regex().captures_iter(text) {
+        let Some(matched) = capture.get(0) else { continue; };
+        if text[..matched.start()].chars().next_back().is_some_and(char::is_alphanumeric)
+            || text[matched.end()..].chars().next().is_some_and(char::is_alphanumeric) {
+            continue;
+        }
+        let parts = if capture.get(1).is_some() {
+            (capture.get(1), capture.get(2), capture.get(3))
+        } else {
+            (capture.get(6), capture.get(5), capture.get(4))
+        };
+        let (Some(year), Some(month), Some(day)) = parts else { continue; };
+        let parsed = (
+            year.as_str().parse::<u32>(),
+            month.as_str().parse::<u32>(),
+            day.as_str().parse::<u32>(),
+        );
+        if let (Ok(year), Ok(month), Ok(day)) = parsed {
+            if let Some(date) = calendar_date(year, month, day) {
+                mentions.push((date, matched.start()));
             }
         }
     }
-
-    let has_dates = names.iter().any(|name| {
-        let bytes = name.as_bytes();
-        bytes.len() >= 10 && bytes[..4].iter().all(u8::is_ascii_digit) && bytes[4] == b'-'
-    });
-    let has_underscores = names.iter().any(|name| name.contains('_'));
-    let has_hyphens = names.iter().any(|name| name.contains('-'));
-    let has_numbered_suffix = names.iter().any(|name| {
-        Path::new(name).file_stem().and_then(|stem| stem.to_str())
-            .and_then(|stem| stem.rsplit(|c: char| !c.is_ascii_digit()).next())
-            .map(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) && digits.len() <= 4)
-            .unwrap_or(false)
-    });
-    let has_title_case = names.iter().any(|name| {
-        Path::new(name).file_stem().and_then(|stem| stem.to_str()).map(|stem| {
-            let words: Vec<_> = stem.split(|c: char| c == '_' || c == '-' || c.is_whitespace()).filter(|word| !word.is_empty()).collect();
-            words.len() > 1 && words.iter().all(|word| word.chars().next().map(char::is_uppercase).unwrap_or(false))
-        }).unwrap_or(false)
-    });
-    let mut lines = vec![format!("Parent folder: {}", root.file_name().and_then(|n| n.to_str()).unwrap_or("(root)"))];
-    let mut patterns = Vec::new();
-    if has_dates { patterns.push("YYYY-MM-DD date prefix"); }
-    if has_underscores { patterns.push("underscore-separated words"); }
-    if has_hyphens { patterns.push("hyphen-separated words"); }
-    if has_title_case { patterns.push("TitleCase words"); }
-    if has_numbered_suffix { patterns.push("numeric suffix / sequence numbering"); }
-    if !patterns.is_empty() { lines.push(format!("Observed conventions: {}", patterns.join(", "))); }
-    if !extension_counts.is_empty() {
-        let mut extensions: Vec<_> = extension_counts.into_iter().collect();
-        extensions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        lines.push(format!("Common extensions: {}", extensions.iter().take(8).map(|(ext, count)| format!(".{} ({})", ext, count)).collect::<Vec<_>>().join(", ")));
+    const MONTHS: [&str; 12] = [
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+    ];
+    for capture in month_date_regex().captures_iter(text) {
+        let Some(matched) = capture.get(0) else { continue; };
+        if text[..matched.start()].chars().next_back().is_some_and(char::is_alphanumeric)
+            || text[matched.end()..].chars().next().is_some_and(char::is_alphanumeric) {
+            continue;
+        }
+        let month_name = capture.get(1).unwrap().as_str().to_ascii_lowercase();
+        let Some(month) = MONTHS.iter().position(|name| *name == month_name) else { continue; };
+        let (Ok(day), Ok(year)) = (
+            capture.get(2).unwrap().as_str().parse::<u32>(),
+            capture.get(3).unwrap().as_str().parse::<u32>(),
+        ) else { continue; };
+        if let Some(date) = calendar_date(year, month as u32 + 1, day) {
+            mentions.push((date, matched.start()));
+        }
     }
-    if !names.is_empty() { lines.push(format!("Sibling filenames: {}", names.join(" | "))); }
-    prior_names.sort();
-    prior_names.dedup();
-    prior_names.truncate(5);
-    if !prior_names.is_empty() { lines.push(format!("Prior rename examples: {}", prior_names.join(" | "))); }
-    if !categories.is_empty() {
-        let mut categories: Vec<_> = categories.into_iter().collect();
-        categories.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        lines.push(format!("Prior categories: {}", categories.iter().take(8).map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")));
+    const FINNISH_MONTH_PREFIXES: [&str; 12] = [
+        "tammi", "helmi", "maalis", "huhti", "touko", "kesä",
+        "heinä", "elo", "syys", "loka", "marras", "joulu",
+    ];
+    for capture in finnish_month_date_regex().captures_iter(text) {
+        let Some(matched) = capture.get(0) else { continue; };
+        if text[..matched.start()].chars().next_back().is_some_and(char::is_alphanumeric)
+            || text[matched.end()..].chars().next().is_some_and(char::is_alphanumeric) {
+            continue;
+        }
+        let month_name = capture.get(2).unwrap().as_str().to_lowercase();
+        let Some(month) = FINNISH_MONTH_PREFIXES.iter().position(|name| month_name.starts_with(name)) else { continue; };
+        let (Ok(day), Ok(year)) = (
+            capture.get(1).unwrap().as_str().parse::<u32>(),
+            capture.get(3).unwrap().as_str().parse::<u32>(),
+        ) else { continue; };
+        if let Some(date) = calendar_date(year, month as u32 + 1, day) {
+            mentions.push((date, matched.start()));
+        }
     }
-    Ok(lines.join("\n").chars().take(900).collect())
+    mentions.sort_by_key(|(_, position)| *position);
+    mentions
 }
 
-/// 2. Suggests a standardized filename (e.g. YYYY-MM-DD_Topic.extension)
-/// by contacting local Ollama instance (localhost:11434). Uses configuration from config.json.
+fn date_context_priority(text: &str, position: usize) -> i8 {
+    let preceding = &text[..position];
+    let line_start = preceding.rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let label = preceding[line_start..].chars().rev().take(80).collect::<String>()
+        .chars().rev().collect::<String>().to_lowercase();
+    if ["eräpäivä", "erapaiva", "due", "pay by"].iter().any(|word| label.contains(word)) {
+        return -1;
+    }
+    if ["invoice number", "invoice no", "invoice #", "reference", "viite"].iter().any(|word| label.contains(word)) {
+        return -1;
+    }
+    if ["invoice date", "issue date", "date of issue", "laskun päiväys",
+        "laskutuspäivä", "päiväys", "pvm", "date"].iter().any(|word| label.contains(word)) {
+        return 2;
+    }
+    0
+}
+
+fn find_document_date(text: &str, original_name: &str) -> Option<String> {
+    let mentions = date_mentions(text);
+    let preferred: HashSet<_> = mentions.iter()
+        .filter(|(_, position)| date_context_priority(text, *position) == 2)
+        .map(|(date, _)| date.clone()).collect();
+    if preferred.len() == 1 {
+        return preferred.into_iter().next();
+    }
+    let unambiguous: HashSet<_> = mentions.into_iter()
+        .filter(|(_, position)| date_context_priority(text, *position) >= 0)
+        .map(|(date, _)| date).collect();
+    if unambiguous.len() == 1 {
+        return unambiguous.into_iter().next();
+    }
+    let from_name: HashSet<_> = date_mentions(original_name).into_iter().map(|(date, _)| date).collect();
+    if from_name.len() == 1 {
+        return from_name.into_iter().next();
+    }
+    None
+}
+
+fn finalize_suggestion(
+    mut suggestion: FilenameSuggestion,
+    extension: &str,
+    confirmed_date: Option<&str>,
+    preferred_invoice_wording: Option<&str>,
+) -> Result<FilenameSuggestion, String> {
+    let proposed = suggestion.new_name.lines().next().unwrap_or("").trim()
+        .trim_matches(|character| character == '"' || character == '\'' || character == char::from(96))
+        .trim();
+    if proposed.is_empty() || proposed.contains('/') || proposed.contains('\\') || proposed == "." || proposed == ".." {
+        return Err("Ollama returned an invalid filename".into());
+    }
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    let expected_suffix = format!(".{}", extension);
+    let mut stem = if proposed.to_ascii_lowercase().ends_with(&expected_suffix) {
+        proposed[..proposed.len() - expected_suffix.len()].to_string()
+    } else {
+        proposed.to_string()
+    };
+    if let Some((before, suffix)) = stem.rsplit_once('.') {
+        if ["pdf", "docx", "xlsx", "doc", "xls", "txt", "md", "csv", "json"]
+            .contains(&suffix.to_ascii_lowercase().as_str()) {
+            stem = before.to_string();
+        }
+    }
+    if confirmed_date.is_none() && !date_mentions(&stem).is_empty() {
+        return Err("The suggested date could not be verified from this document".into());
+    }
+    let without_dates = numeric_date_regex().replace_all(&stem, "");
+    let without_dates = month_date_regex().replace_all(&without_dates, "");
+    let without_dates = finnish_month_date_regex().replace_all(&without_dates, "");
+    let mut normalized = String::new();
+    for character in without_dates.chars() {
+        let character = match character {
+            'ä' | 'å' => 'a',
+            'Ä' | 'Å' => 'A',
+            'ö' => 'o',
+            'Ö' => 'O',
+            _ => character,
+        };
+        if character.is_alphanumeric() {
+            normalized.push(character);
+        } else if !normalized.ends_with('_') && !normalized.is_empty() {
+            normalized.push('_');
+        }
+    }
+    let mut tokens: Vec<String> = normalized.trim_matches('_').split('_')
+        .filter(|token| !token.is_empty())
+        .map(|token| match token.to_lowercase().as_str() {
+            "invoice" => preferred_invoice_wording.unwrap_or("Invoice").to_string(),
+            "lasku" => preferred_invoice_wording.unwrap_or("Lasku").to_string(),
+            "ry" => "Ry".to_string(),
+            _ => token.to_string(),
+        })
+        .collect();
+    let generic = |token: &str| {
+        ["download", "scan", "untitled", "file", "document", "invoice", "lasku",
+            "receipt", "report", "binary"].contains(&token.to_lowercase().as_str())
+    };
+    if tokens.iter().any(|token| ["download", "untitled", "binary"].contains(&token.to_lowercase().as_str())) {
+        return Err("The suggestion still uses a download or placeholder name".into());
+    }
+    if tokens.last().is_some_and(|token| ["document", "file", "scan"].contains(&token.to_lowercase().as_str())) {
+        return Err("The suggestion ends with a generic document label".into());
+    }
+    let meaningful_word = tokens.iter().any(|token| token.chars().any(char::is_alphabetic) && !generic(token));
+    let meaningful_reference = tokens.iter().any(|token| token.chars().all(char::is_numeric) && token.len() >= 5);
+    if !meaningful_word && !meaningful_reference {
+        return Err("The suggestion needs a specific subject, organization, or reference number".into());
+    }
+    if tokens.len() > 2 && ["invoice", "lasku"].contains(&tokens[0].to_lowercase().as_str()) && meaningful_word {
+        let document_type = tokens.remove(0);
+        tokens.push(document_type);
+    }
+    if let Some(wording) = preferred_invoice_wording {
+        let has_invoice_type = tokens.iter().any(|token| {
+            let lower = token.to_lowercase();
+            lower == "invoice" || lower.ends_with("lasku")
+        });
+        if !has_invoice_type {
+            tokens.push(wording.to_string());
+        }
+    }
+    let body = tokens.join("_");
+    suggestion.new_name = match confirmed_date {
+        Some(date) => format!("{}_{}.{}", date, body, extension),
+        None => format!("{}.{}", body, extension),
+    };
+    Ok(suggestion)
+}
+
+fn parse_model_suggestion(response: &str) -> Result<FilenameSuggestion, String> {
+    let text = response.trim().trim_matches(char::from(96)).trim();
+    serde_json::from_str::<FilenameSuggestion>(text).ok().or_else(|| {
+        let start = text.find('{')?;
+        let end = text.rfind('}')?;
+        serde_json::from_str::<FilenameSuggestion>(&text[start..=end]).ok()
+    }).or_else(|| {
+        let plain = text.lines().next()?.trim().trim_matches(|character| character == '"' || character == '\'').trim();
+        (!plain.is_empty()).then(|| FilenameSuggestion {
+            new_name: plain.to_string(),
+            category: String::new(),
+            reason: String::new(),
+        })
+    }).ok_or_else(|| "Ollama returned an empty or unreadable suggestion".to_string())
+}
+
+/// Suggests a filename for one document using its content and only matching sibling names.
 #[cfg_attr(feature = "desktop", tauri::command)]
 async fn suggest_filename_with_ollama(
     text_snippet: String,
     extension: String,
     model: Option<String>,
     folder_context: Option<String>,
+    file_path: String,
 ) -> Result<FilenameSuggestion, String> {
     let client = reqwest::Client::new();
     let config = load_prompt_config();
-
     let selected_model = model.unwrap_or(config.model.clone());
     let context_enabled = config.folder_context_enabled && folder_context.is_some();
-    let system_prompt = if context_enabled {
-        format!("{}\n\nUse the directory context when choosing the name. Return only valid JSON with string fields new_name, category, and reason.", config.system_prompt)
-    } else {
-        config.system_prompt.clone()
-    };
-
-    let mut prompt = config
-        .prompt_template
+    let original_name = Path::new(&file_path).file_name().and_then(|value| value.to_str()).unwrap_or("");
+    let confirmed_date = find_document_date(&text_snippet, original_name);
+    let system_prompt = format!(
+        "{}\n\n{}{}",
+        config.system_prompt,
+        UNIVERSAL_NAMING_INSTRUCTIONS,
+        if context_enabled { format!("\n\n{}", FOLDER_CONTEXT_INSTRUCTIONS) } else { String::new() }
+    );
+    let mut prompt = config.prompt_template
         .replace("{extension}", &extension)
         .replace("{text_snippet}", &text_snippet)
         .replace("{folder_context}", folder_context.as_deref().unwrap_or("(disabled)"));
     if context_enabled && !config.prompt_template.contains("{folder_context}") {
-        prompt = format!("Directory context:\n{}\n\n{}", folder_context.as_deref().unwrap_or_default(), prompt);
+        prompt = format!("Folder context:\n{}\n\n{}", folder_context.as_deref().unwrap_or_default(), prompt);
     }
-
-    let payload = OllamaGenerateRequest {
-        model: selected_model,
-        prompt,
-        system: system_prompt,
-        stream: false,
+    prompt.push_str(&format!("\nOriginal filename: {}", original_name));
+    if let Some(date) = confirmed_date.as_deref() {
+        prompt.push_str(&format!("\nConfirmed document date: {}. Start new_name with {}_.", date, date));
+    } else {
+        prompt.push_str("\nNo full document date could be confirmed. Do not invent one.");
+    }
+    let matching_names = if context_enabled {
+        relevant_sibling_names(Path::new(&file_path), &text_snippet)
+    } else {
+        Vec::new()
     };
-
-    let response = client
-        .post("http://localhost:11434/api/generate")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to connect to Ollama (http://localhost:11434): {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Ollama API returned error: {}", response.status()));
+    let preferred_invoice_wording = if document_kind(&text_snippet).or_else(|| document_kind(original_name)) == Some("invoice") {
+        dominant_invoice_label(&matching_names)
+    } else {
+        None
+    };
+    if context_enabled {
+        if matching_names.is_empty() {
+            prompt.push_str("\nNo clearly related sibling names were found. Name this file from its own content.");
+        } else {
+            prompt.push_str(&format!("\nRelevant sibling names for this target only: {}", matching_names.join(" | ")));
+        }
+        if let Some(wording) = preferred_invoice_wording {
+            prompt.push_str(&format!("\nUse {} as the document-type wording for matching invoices.", wording));
+        }
     }
-
-    let parsed: OllamaGenerateResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
-
-    let response_text = parsed.response.trim().trim_matches('`').trim();
-    let suggestion = serde_json::from_str::<FilenameSuggestion>(response_text).ok().or_else(|| {
-        let start = response_text.find('{')?;
-        let end = response_text.rfind('}')?;
-        serde_json::from_str::<FilenameSuggestion>(&response_text[start..=end]).ok()
-    }).or_else(|| {
-        let plain = response_text.lines().next()?.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-        if plain.is_empty() { None } else { Some(FilenameSuggestion { new_name: plain.to_string(), category: String::new(), reason: String::new() }) }
-    }).ok_or_else(|| "Ollama returned an empty filename suggestion.".to_string())?;
-
-    let mut suggested_name = suggestion.new_name.lines().next().unwrap_or("").trim().to_string();
-    if suggested_name.is_empty() || suggested_name.contains('/') || suggested_name.contains('\\') || suggested_name == "." || suggested_name == ".." {
-        return Err("Ollama returned an invalid filename.".into());
+    prompt.push_str("\nReturn only JSON with new_name, category, and reason. The name must identify this specific document.");
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "new_name": {"type": "string"},
+            "category": {"type": "string"},
+            "reason": {"type": "string"}
+        },
+        "required": ["new_name", "category", "reason"]
+    });
+    let temperature = if config.temperature.is_finite() {
+        config.temperature.clamp(0.0, 2.0)
+    } else {
+        0.0
+    };
+    let mut last_issue = String::new();
+    for attempt in 0..2 {
+        let payload = OllamaGenerateRequest {
+            model: selected_model.clone(),
+            prompt: prompt.clone(),
+            system: system_prompt.clone(),
+            stream: false,
+            format: schema.clone(),
+            options: OllamaOptions { temperature },
+        };
+        let response = client.post("http://localhost:11434/api/generate")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|error| format!("Failed to connect to Ollama (http://localhost:11434): {}", error))?;
+        if !response.status().is_success() {
+            return Err(format!("Ollama API returned error: {}", response.status()));
+        }
+        let generated: OllamaGenerateResponse = response.json().await
+            .map_err(|error| format!("Failed to parse Ollama response: {}", error))?;
+        let result = parse_model_suggestion(&generated.response)
+            .and_then(|suggestion| finalize_suggestion(
+                suggestion, &extension, confirmed_date.as_deref(), preferred_invoice_wording
+            ));
+        match result {
+            Ok(suggestion) => return Ok(suggestion),
+            Err(issue) => {
+                last_issue = issue;
+                if attempt == 0 {
+                    prompt.push_str(&format!(
+                        "\nYour previous filename was rejected: {}. Try again with a specific subject or reference from this document. Respect the confirmed date when supplied.",
+                        last_issue
+                    ));
+                }
+            }
+        }
     }
-    let target_ext = format!(".{}", extension);
-    if !suggested_name.to_lowercase().ends_with(&target_ext.to_lowercase()) {
-        suggested_name = format!("{}{}", suggested_name, target_ext);
-    }
-    Ok(FilenameSuggestion { new_name: suggested_name, ..suggestion })
+    Err(format!("Ollama could not produce a usable filename: {}", last_issue))
 }
 
 /// 3. Safely renames the file on the local filesystem with collision handling.
@@ -442,14 +773,114 @@ mod fixture_tests {
     }
 
     #[test]
-    fn blueprint_uses_existing_folder_names_and_conventions() {
-        let blueprint = build_directory_blueprint(fixture("finance/invoices"))
-            .expect("invoice folder should produce a blueprint");
-        assert!(blueprint.contains("Parent folder: invoices"));
-        assert!(blueprint.contains("YYYY-MM-DD date prefix"));
-        assert!(blueprint.contains("underscore-separated words"));
-        assert!(blueprint.contains("2026-08-01_northstar.txt"));
-        assert!(blueprint.contains("Common extensions:"));
+    fn mixed_folder_context_selects_only_the_same_document_kind_and_subject() {
+        let folder = std::env::temp_dir().join(format!(
+            "magicrenamer-mixed-folder-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&folder).expect("temporary folder should be created");
+        for name in [
+            "download (20).pdf",
+            "2026-04-10_Nordic_Engineering_Association_Lasku.pdf",
+            "2025-11-12_Nordic_Engineering_Association_Invoice.pdf",
+            "2024-02-13_Nordic_Engineering_Association_Lasku.pdf",
+            "2026-03-12_Nordic_Engineering_Association_Report.pdf",
+            "2026-07-01_Alpine_Office_Lasku.pdf",
+        ] {
+            std::fs::write(folder.join(name), []).expect("fixture file should be created");
+        }
+        let blueprint = build_directory_blueprint(folder.to_string_lossy().into_owned()).unwrap();
+        let siblings = relevant_sibling_names(
+            &folder.join("download (20).pdf"),
+            "Invoice\nVendor: Nordic Engineering Association\nInvoice date: 2026-09-14",
+        );
+        let unrelated = relevant_sibling_names(
+            &folder.join("download (20).pdf"),
+            "Contract\nCustomer: Alpine Office\nSigned: 2026-09-14",
+        );
+        std::fs::remove_dir_all(&folder).expect("temporary folder should be removed");
+
+        assert!(blueprint.contains("may be unrelated"));
+        assert_eq!(siblings.len(), 3);
+        assert_eq!(dominant_invoice_label(&siblings), Some("Lasku"));
+        assert!(siblings.iter().all(|name| name.contains("Nordic_Engineering_Association")));
+        assert!(siblings.iter().all(|name| name.contains("Lasku") || name.contains("Invoice")));
+        assert!(unrelated.is_empty());
+    }
+
+    #[test]
+    fn identifies_issue_date_without_using_invoice_due_date() {
+        assert_eq!(
+            find_document_date(
+                "Laskun päiväys: 14.09.2026\nEräpäivä: 29.09.2026",
+                "download (20).pdf"
+            ),
+            Some("2026-09-14".to_string())
+        );
+        assert_eq!(
+            find_document_date("Date: August 12, 2026", "download_1.txt"),
+            Some("2026-08-12".to_string())
+        );
+        assert_eq!(
+            find_document_date("Laskun päiväys: 14. syyskuuta 2026", "download.pdf"),
+            Some("2026-09-14".to_string())
+        );
+        assert_eq!(
+            find_document_date("No date in contents", "2026-03-12_invoice.pdf"),
+            Some("2026-03-12".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn excerpt_preserves_a_date_found_later_in_the_document() {
+        let folder = std::env::temp_dir().join(format!(
+            "magicrenamer-late-date-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("download.txt");
+        let content = format!(
+            "Invoice\nVendor: Nordic Engineering Association\n{}\nInvoice date: 2026-09-14\nClosing note",
+            "Item description\n".repeat(10)
+        );
+        std::fs::write(&path, content).unwrap();
+        let snippet = extract_document_snippet(path.to_string_lossy().into_owned()).await.unwrap();
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert!(snippet.starts_with("Document date: 2026-09-14"), "{}", snippet);
+    }
+
+    #[test]
+    fn moves_confirmed_date_to_front_and_rejects_generic_names() {
+        let suggestion = |name: &str| FilenameSuggestion {
+            new_name: name.to_string(),
+            category: "Invoice".to_string(),
+            reason: String::new(),
+        };
+        let dated = finalize_suggestion(
+            suggestion("Tekniikan-Akateemiset-ry-LASKU-2026-09-14.pdf"),
+            "pdf",
+            Some("2026-09-14"),
+            None,
+        ).expect("dated invoice should be normalized");
+        assert_eq!(
+            dated.new_name,
+            "2026-09-14_Tekniikan_Akateemiset_Ry_Lasku.pdf"
+        );
+        let consistent = finalize_suggestion(
+            suggestion("Invoice_Nordic_Engineering_Association.pdf"),
+            "pdf",
+            Some("2026-09-14"),
+            Some("Lasku"),
+        ).expect("matching invoices should use the same type label");
+        assert_eq!(consistent.new_name, "2026-09-14_Nordic_Engineering_Association_Lasku.pdf");
+        let finnish = finalize_suggestion(
+            suggestion("2025-05-01_Jäsenlasku_TEK.pdf"), "pdf", Some("2025-05-01"), None
+        ).unwrap();
+        assert_eq!(finnish.new_name, "2025-05-01_Jasenlasku_TEK.pdf");
+        assert!(finalize_suggestion(suggestion("download (20).pdf"), "pdf", None, None).is_err());
+        assert!(finalize_suggestion(suggestion("2026-10-12-Invoice.pdf"), "pdf", Some("2026-10-12"), None).is_err());
+        assert!(finalize_suggestion(suggestion("Nordic_Association_document.pdf"), "pdf", None, None).is_err());
     }
 
     #[test]
@@ -460,6 +891,38 @@ mod fixture_tests {
         for extension in ["txt", "md", "csv", "json", "pdf", "docx"] {
             assert!(files.iter().any(|file| file.extension == extension), "missing .{} fixture", extension);
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a local Ollama server with qwen2.5-coder:14b"]
+    async fn local_ollama_mixed_invoice_smoke() {
+        let folder = std::env::temp_dir().join(format!(
+            "magicrenamer-ollama-smoke-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        for name in [
+            "download (20).pdf",
+            "2025-11-12_Nordic_Engineering_Association_Lasku.pdf",
+            "2024-02-13_Nordic_Engineering_Association_Lasku.pdf",
+            "2025-07-14_Nordic_Engineering_Association_Invoice.pdf",
+            "2026-03-12_Nordic_Engineering_Association_Report.pdf",
+        ] {
+            std::fs::write(folder.join(name), []).unwrap();
+        }
+        let result = suggest_filename_with_ollama(
+            "INVOICE\nInvoice date: 2026-09-14\nSupplier: Nordic Engineering Association\nInvoice number: 10024665".to_string(),
+            "pdf".to_string(),
+            Some("qwen2.5-coder:14b".to_string()),
+            Some(build_directory_blueprint(folder.to_string_lossy().into_owned()).unwrap()),
+            folder.join("download (20).pdf").to_string_lossy().into_owned(),
+        ).await;
+        std::fs::remove_dir_all(&folder).unwrap();
+        let result = result.expect("local model should suggest a usable filename");
+        assert!(result.new_name.starts_with("2026-09-14_"), "{}", result.new_name);
+        assert!(result.new_name.contains("Nordic") || result.new_name.contains("10024665"), "{}", result.new_name);
+        assert!(!result.new_name.to_lowercase().contains("download"), "{}", result.new_name);
+        assert!(result.new_name.to_lowercase().contains("lasku"), "{}", result.new_name);
     }
 
     #[tokio::test]

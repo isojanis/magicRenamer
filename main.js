@@ -22,7 +22,7 @@ async function invokeTauri(cmd, args) {
     return "INVOICE #98412\nDate: 2026-08-15\nBilled to: Acme Corp\nAmount: $1,250.00\nServices rendered: Q3 Security Audit & Review";
   }
   if (cmd === "build_directory_blueprint") {
-    return "Parent folder: Mock invoices\nObserved conventions: YYYY-MM-DD date prefix, underscore-separated words\nSibling filenames: 2026-08-01_Acme_INV-101.pdf";
+    return "Selected folder: Mock invoices. 1 visible file; 1 already starts with YYYY-MM-DD. Files in this folder may be unrelated.";
   }
   if (cmd === "suggest_filename_with_ollama") {
     return { new_name: "2026-08-15_AcmeCorp_Invoice.pdf", category: "Invoice", reason: "Matched the invoice naming convention." };
@@ -164,6 +164,7 @@ function updatePreview(item) {
       <div class="file-card-row"><strong>Status:</strong> <span class="status-badge ${item.status}">${item.status}</span></div>
       ${item.category ? `<div class="file-card-row"><strong>Category:</strong> <span>${item.category}</span></div>` : ""}
       ${item.reason ? `<div class="file-card-row"><strong>AI rationale:</strong> <span>${item.reason}</span></div>` : ""}
+      ${item.error ? `<div class="file-card-row"><strong>Issue:</strong> <span>${item.error}</span></div>` : ""}
     </div>
     <div class="preview-text-box">
       <h4>Document Preview Snippet</h4>
@@ -179,6 +180,10 @@ async function processFile(index) {
 
   try {
     item.status = "processing";
+    item.error = "";
+    item.suggestedName = "";
+    item.category = "";
+    item.reason = "";
     renderQueue();
     if (activeIndex === index) selectItem(index);
 
@@ -192,6 +197,7 @@ async function processFile(index) {
       extension: item.extension,
       model: getSelectedModel(),
       folderContext: folderContextForRun ? activeFolderContext : null,
+      filePath: item.path,
     });
 
     item.suggestedName = suggested.new_name || "";
@@ -311,7 +317,7 @@ async function chooseFolder() {
     if (Array.isArray(files)) {
       folderContextForRun = Boolean(currentConfig?.folder_context_enabled ?? true);
       if (folderContextForRun && files.length > 500) {
-        const keepContext = window.confirm(`Large folder detected (${files.length} files). Context will use up to 20 sibling names. Press OK to continue with context, or Cancel to disable context for this run.`);
+        const keepContext = window.confirm(`Large folder detected (${files.length} files). Context checks nearby files for each document. Press OK to continue with context, or Cancel to disable context for this run.`);
         if (!keepContext) folderContextForRun = false;
       }
       activeFolderContext = folderContextForRun

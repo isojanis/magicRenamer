@@ -90,9 +90,14 @@ The UI handles the visual queue and triage workflow.
 - [x] Resizable UI columns with persistent widths and dark-mode styling fixes.
 - [x] MIT License added and verified.
 - [x] Folder-Context Awareness Intelligence (Enabled by default):
-  - [x] Pass 1 Rust Blueprint extractor: Scan sibling file names, detect date & naming patterns (`YYYY-MM-DD`, `snake_case`, `kebab-case`), read existing `rename_history_*.json`, and sample directory theme.
+  - [x] Folder summary reports local file counts and date-prefix observations without treating the whole folder as one document category.
+  - [x] For each document, use up to eight sibling names with the same document kind and meaningful subject overlap.
+  - [x] Use matching siblings for consistent wording, including a shared invoice label when one label is clearly dominant.
+  - [x] Extract issue dates from source content and enforce a leading full date in the final filename.
+  - [x] Reject generic suggestions, retry once, and show a failed state when no usable name is produced.
+  - [x] Send the configured temperature and structured JSON format to Ollama.
   - [x] Add `folder_context_enabled: true` toggle in `config.json` and UI Settings modal.
-  - [x] Smart excerpting per file format (headers/schema/headings) keeping prompt within 200-500 tokens.
+  - [x] Smart excerpts per file format, with a confirmed document date added when it appears beyond the excerpt.
   - [x] Large folder pre-flight warning (>500-1,000 files): Alert user if folder context is enabled, warning that local LLMs may struggle with excessive breadth/variability, and offer one-click toggle to disable context for the run.
   - [x] Pass 2 Context-aware Ollama prompt with structured JSON output (`new_name`, `category`, `reason`).
 - [ ] Original filename preservation:
@@ -144,78 +149,14 @@ To preserve the provenance and original filename of renamed documents without ri
 
 ---
 
-## 7. Folder-Context Awareness Intelligence (Enabled by Default)
+## 7. Folder context and naming validation
 
-To enable small local LLMs (3B-8B parameters with 2k-4k token limits) to generate naming suggestions that harmoniously fit into existing project directories, MagicRenamer implements a **structured, two-pass pipeline**:
+Folder context is enabled by default and can be disabled in Settings or for a large run. A selected folder can contain unrelated document kinds. Its summary reports only basic observations, such as file count and existing date prefixes.
 
-```
- ┌──────────────────────────────────────────────────────────────┐
- │ PASS 1: Directory Pre-Scan & Context Extraction (Fast Rust)   │
- │ - Group files by extension, topic, or date cluster.          │
- │ - Extract structural metadata & sample key terms.            │
- │ - Read existing rename_history_*.json manifest for priors.   │
- │ - Build a compact "Directory Blueprint" (150-300 tokens).    │
- └──────────────────────────────┬───────────────────────────────┘
-                                │
-                                ▼
- ┌──────────────────────────────────────────────────────────────┐
- │ PASS 2: Context-Aware File Renaming Prompt (Local LLM)       │
- │ System Prompt: Directory Blueprint + Consistency Rules       │
- │ User Prompt: Target File Details + High-Signal Excerpt       │
- │ Output: Clean JSON: { new_name, category, reason }           │
- └──────────────────────────────────────────────────────────────┘
-```
+For each target document, the app extracts a compact text excerpt and looks for a full document date. It distinguishes invoice issue dates from due dates when labels are present. Dates in YYYY-MM-DD, DD.MM.YYYY, English month-name, and Finnish month-name forms are supported. The excerpt includes a confirmed date even when it occurs later in the document.
 
-### 1. Default Configuration
-- **Default Status:** **Enabled by default** (`folder_context_enabled: true` in `config.json`).
-- **UI Toggle:** Checkbox in the Settings modal allowing users to disable context awareness if they want isolated file-only naming.
+When context is enabled, sibling filenames are considered only if they have the same recognizable document kind and at least two meaningful subject tokens in common with the target. Up to eight matching names are sent to Ollama. An unrelated receipt, report, or contract does not set an invoice's terminology. If matching invoices clearly favor one of the equivalent labels Lasku or Invoice, that wording is used for the target.
 
-### 2. Pass 1: The Compact "Directory Blueprint"
-Constructed instantly in Rust (<5ms) during directory scan or queue loading:
-1. **Parent Directory Theme:** Parent directory name (e.g. `Project_Apollo_Invoices` or `Taxes_2026`).
-2. **Detected Sibling Conventions:** Sample of existing sibling filenames to detect case styles (`kebab-case`, `snake_case`, `TitleCase`) and date formats (`YYYY-MM-DD`).
-3. **Prior Renames:** Top rules/categories extracted from existing `rename_history_*.json` in the folder.
-4. **Sequence Tracking:** Numerical indexing awareness (e.g. recognizing `invoice_003.pdf` so the next file is indexed consistently).
+Ollama receives the configured temperature and a JSON response schema. The app then validates and normalizes each suggestion. A confirmed date is placed at the start in YYYY-MM-DD form; field separators become underscores; the source extension is retained. Generic names such as download, document, and a date plus Invoice alone are rejected. The app asks Ollama once more for a specific name, then marks the item failed with an explanation if it still cannot produce one.
 
-```yaml
-Directory Context:
-  Parent Folder: "Project_Apollo_Q3_Invoices"
-  Detected Pattern: "YYYY-MM-DD_<Vendor>_<InvoiceNo>.<ext>"
-  Sibling Files:
-    - "2026-08-01_Acme_INV-101.pdf"
-    - "2026-08-15_Acme_INV-102.pdf"
-    - "2026-09-01_CloudHost_8921.txt"
-  Known Categories: [Invoices, Receipts, Contracts]
-```
-
-### 3. Smart Excerpting (Token Budget Optimization)
-Instead of dumping full contents, excerpts are tuned by file type to keep the per-file token budget around 50–150 tokens:
-- **PDF / DOCX:** Title metadata, document header, first paragraph.
-- **TXT / Markdown:** First 3 lines + headings + final line.
-- **JSON:** Root schema keys & array lengths (omitting huge array payloads).
-- **CSV:** Column headers + first 2 data rows.
-
-### 4. Structured Output Format
-When context awareness is enabled, the model returns JSON:
-```json
-{
-  "new_name": "2026-10-02_Hetzner_Cloud_Server.txt",
-  "category": "Receipt",
-  "reason": "Matched existing date format (YYYY-MM-DD), detected vendor 'Hetzner', and aligned with expense naming pattern."
-}
-```
-The UI uses `new_name` for the suggestion input and displays `category` and `reason` in the Preview & Details card as helpful AI rationale.
-
-### 5. Large Folder Guardrail & User Warning (>500-1,000 files)
-When scanning a directory with thousands of files:
-- **Challenge:** A folder containing thousands of heterogenous documents risks creating an excessively noisy blueprint or confusing local small parameter LLMs (which excel at focused, local consistency but degrade with massive multi-topic diversity).
-- **Guardrail Behavior:**
-  - If the discovered file count exceeds a threshold (e.g., 500+ files) and `folder_context_enabled` is active, MagicRenamer displays an interactive warning banner/modal before processing starts:
-    > ⚠️ **Large Folder Detected (X files)**: Folder-Context Awareness is currently enabled. Inferring conventions across very large, diverse directories may exceed the optimal capacity of local LLMs.
-  - **User Choices:**
-    1. **"Proceed with Context (Sampled)"**: Limits sibling sampling to the immediate subfolder or top 20 representative files.
-    2. **"Disable Context for this Run (Recommended)"**: Seamlessly falls back to independent, file-only triage without mutating permanent user settings.
-
-
-
-
+The large-folder warning remains available when more than 500 files are discovered. The user can disable context for that run without changing the saved setting.
