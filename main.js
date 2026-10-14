@@ -21,18 +21,22 @@ async function invokeTauri(cmd, args) {
   if (cmd === "extract_document_snippet") {
     return "INVOICE #98412\nDate: 2026-08-15\nBilled to: Acme Corp\nAmount: $1,250.00\nServices rendered: Q3 Security Audit & Review";
   }
+  if (cmd === "build_directory_blueprint") {
+    return "Parent folder: Mock invoices\nObserved conventions: YYYY-MM-DD date prefix, underscore-separated words\nSibling filenames: 2026-08-01_Acme_INV-101.pdf";
+  }
   if (cmd === "suggest_filename_with_ollama") {
-    return "2026-08-15_AcmeCorp_Invoice.pdf";
+    return { new_name: "2026-08-15_AcmeCorp_Invoice.pdf", category: "Invoice", reason: "Matched the invoice naming convention." };
   }
   if (cmd === "rename_file") {
     return true;
   }
   if (cmd === "get_prompt_config") {
     return {
-      system_prompt: "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.",
-      prompt_template: "Target extension: .{extension}\nDocument content snippet:\n\"\"\"\n{text_snippet}\n\"\"\"\nSuggested filename:",
+      system_prompt: "Use the document and directory context to suggest a concise filename that follows the directory's conventions. Return only valid JSON with string fields new_name, category, and reason. new_name must be a filename, not a path, and retain the target extension.",
+      prompt_template: "Directory context:\n{folder_context}\n\nTarget extension: .{extension}\nDocument excerpt:\n\"\"\"\n{text_snippet}\n\"\"\"\nReturn JSON with new_name, category, and reason.",
       model: "qwen2.5-coder:7b",
-      temperature: 0.2
+      temperature: 0.2,
+      folder_context_enabled: true
     };
   }
   if (cmd === "save_prompt_config") {
@@ -45,6 +49,8 @@ async function invokeTauri(cmd, args) {
 let queue = [];
 let activeIndex = -1;
 let isProcessingAll = false;
+let activeFolderContext = null;
+let folderContextForRun = true;
 
 // DOM Elements
 const dropZone = document.getElementById("drop-zone");
@@ -75,6 +81,7 @@ const cfgPromptTemplate = document.getElementById("cfg-prompt-template");
 const cfgModel = document.getElementById("cfg-model");
 const cfgTemperatureSlider = document.getElementById("cfg-temperature-slider");
 const cfgTemperatureNum = document.getElementById("cfg-temperature-num");
+const cfgFolderContextEnabled = document.getElementById("cfg-folder-context-enabled");
 
 let currentConfig = null;
 
@@ -155,6 +162,8 @@ function updatePreview(item) {
       <div class="file-card-row"><strong>Size:</strong> <span>${formatSize(item.size_bytes)}</span></div>
       <div class="file-card-row"><strong>Path:</strong> <span class="path-break">${item.path}</span></div>
       <div class="file-card-row"><strong>Status:</strong> <span class="status-badge ${item.status}">${item.status}</span></div>
+      ${item.category ? `<div class="file-card-row"><strong>Category:</strong> <span>${item.category}</span></div>` : ""}
+      ${item.reason ? `<div class="file-card-row"><strong>AI rationale:</strong> <span>${item.reason}</span></div>` : ""}
     </div>
     <div class="preview-text-box">
       <h4>Document Preview Snippet</h4>
@@ -182,9 +191,12 @@ async function processFile(index) {
       textSnippet: snippet,
       extension: item.extension,
       model: getSelectedModel(),
+      folderContext: folderContextForRun ? activeFolderContext : null,
     });
 
-    item.suggestedName = suggested;
+    item.suggestedName = suggested.new_name || "";
+    item.category = suggested.category || "";
+    item.reason = suggested.reason || "";
     item.status = "ready";
   } catch (err) {
     console.error(`Failed processing ${item.name}:`, err);
@@ -297,6 +309,14 @@ async function chooseFolder() {
   try {
     const files = await invokeTauri("scan_folder", { folderPath: selectedFolder });
     if (Array.isArray(files)) {
+      folderContextForRun = Boolean(currentConfig?.folder_context_enabled ?? true);
+      if (folderContextForRun && files.length > 500) {
+        const keepContext = window.confirm(`Large folder detected (${files.length} files). Context will use up to 20 sibling names. Press OK to continue with context, or Cancel to disable context for this run.`);
+        if (!keepContext) folderContextForRun = false;
+      }
+      activeFolderContext = folderContextForRun
+        ? await invokeTauri("build_directory_blueprint", { folderPath: selectedFolder })
+        : null;
       queue = files.map((f) => ({
         ...f,
         status: "pending",
@@ -359,6 +379,7 @@ function openPromptModal() {
   cfgPromptTemplate.value = currentConfig.prompt_template || "";
   cfgModel.value = currentConfig.model || "qwen2.5-coder:7b";
   syncTemperature(currentConfig.temperature !== undefined ? currentConfig.temperature : 0.2);
+  cfgFolderContextEnabled.checked = currentConfig.folder_context_enabled !== false;
   promptModal.classList.remove("hidden");
 }
 
@@ -373,6 +394,7 @@ async function savePromptModal() {
     prompt_template: cfgPromptTemplate.value.trim(),
     model: cfgModel.value.trim() || "qwen2.5-coder:7b",
     temperature: !isNaN(tempVal) ? Math.max(0.0, Math.min(1.0, tempVal)) : 0.2,
+    folder_context_enabled: cfgFolderContextEnabled.checked,
   };
 
   try {
@@ -390,10 +412,11 @@ async function savePromptModal() {
 }
 
 function resetDefaultPrompts() {
-  cfgSystemPrompt.value = "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.";
-  cfgPromptTemplate.value = "Target extension: .{extension}\nDocument content snippet:\n\"\"\"\n{text_snippet}\n\"\"\"\nSuggested filename:";
+  cfgSystemPrompt.value = "Use the document and directory context to suggest a concise filename that follows the directory's conventions. Return only valid JSON with string fields new_name, category, and reason. new_name must be a filename, not a path, and retain the target extension.";
+  cfgPromptTemplate.value = "Directory context:\n{folder_context}\n\nTarget extension: .{extension}\nDocument excerpt:\n\"\"\"\n{text_snippet}\n\"\"\"\nReturn JSON with new_name, category, and reason.";
   cfgModel.value = "qwen2.5-coder:7b";
   syncTemperature(0.2);
+  cfgFolderContextEnabled.checked = true;
 }
 
 // Event Listeners

@@ -29,3 +29,8 @@ src-tauri/target
 target
 **/*.rs.bk
 Cargo.lock
+
+# Synthetic integration-test documents are generated locally.
+/test_docs/**
+!/test_docs/README.md
+!/test_docs/generate_fixtures.py

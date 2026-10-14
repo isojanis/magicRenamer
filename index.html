@@ -44,8 +44,12 @@
             <textarea id="cfg-system-prompt" rows="4" placeholder="System prompt..."></textarea>
           </div>
           <div class="field-group">
-            <label for="cfg-prompt-template">User Prompt Template (use <code>{extension}</code> and <code>{text_snippet}</code>)</label>
+            <label for="cfg-prompt-template">User Prompt Template (use <code>{extension}</code>, <code>{text_snippet}</code>, and <code>{folder_context}</code>)</label>
             <textarea id="cfg-prompt-template" rows="5" placeholder="Prompt template..."></textarea>
+          </div>
+          <div class="field-group context-setting">
+            <label><input type="checkbox" id="cfg-folder-context-enabled" /> Use folder naming context by default</label>
+            <small>Uses nearby filenames and local rename history when preparing suggestions.</small>
           </div>
           <div class="field-row">
             <div class="field-group flex-1">

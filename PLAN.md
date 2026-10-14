@@ -85,6 +85,137 @@ The UI handles the visual queue and triage workflow.
 - [x] Create test documents in `test_docs/` for interactive verification.
 
 ### Phase 4: Polish & Production Packaging 🔄 (Current Step)
-- [ ] Name collision & overwrite protection (auto-append `_1`, `_2` if destination exists).
+- [x] Name collision & overwrite protection (auto-append `_1`, `_2` if destination exists).
+- [x] Prompt configuration file (`config.json`) & in-app settings modal with temperature slider.
+- [x] Resizable UI columns with persistent widths and dark-mode styling fixes.
+- [x] MIT License added and verified.
+- [x] Folder-Context Awareness Intelligence (Enabled by default):
+  - [x] Pass 1 Rust Blueprint extractor: Scan sibling file names, detect date & naming patterns (`YYYY-MM-DD`, `snake_case`, `kebab-case`), read existing `rename_history_*.json`, and sample directory theme.
+  - [x] Add `folder_context_enabled: true` toggle in `config.json` and UI Settings modal.
+  - [x] Smart excerpting per file format (headers/schema/headings) keeping prompt within 200-500 tokens.
+  - [x] Large folder pre-flight warning (>500-1,000 files): Alert user if folder context is enabled, warning that local LLMs may struggle with excessive breadth/variability, and offer one-click toggle to disable context for the run.
+  - [x] Pass 2 Context-aware Ollama prompt with structured JSON output (`new_name`, `category`, `reason`).
+- [ ] Original filename preservation:
+  - [ ] Implement extended attributes (`xattrs` on Linux/macOS, ADS on Windows) for zero-mutation local metadata.
+  - [ ] Implement visible timestamped `rename_history_YYYYMMDD_HHMM.json` manifest generation on rename batch.
+  - [ ] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
 - [ ] Launch application in dev mode (`npm run tauri dev`) or test binary directly.
 - [ ] Standalone release packaging (`npm run tauri build`).
+
+---
+
+## 6. Original Filename Preservation & History Tracking
+
+To preserve the provenance and original filename of renamed documents without risking document corruption or modifying raw file bytes, MagicRenamer uses a dual-layer strategy:
+
+### Layer 1: Filesystem Extended Attributes (`xattr` / ADS) — Zero-Mutation Local Storage
+- **Mechanism:** When a file is renamed, MagicRenamer attaches an extended attribute to the target file:
+  - **Linux / macOS (`xattr`):** `user.magicrenamer.original_name = "original_filename.ext"`
+  - **Windows (NTFS):** Alternate Data Stream (ADS)
+- **Integrity Guarantee:** Does not alter a single byte of the file itself. Cryptographic hashes, digital signatures (e.g. signed PDFs), and binary structures remain 100% intact.
+- **Limitation:** Extended attributes do not survive standard cloud storage uploads (Google Drive, Dropbox, OneDrive) or file transfers across non-compatible filesystems (FAT32/exFAT).
+
+### Layer 2: Visible Timestamped Manifest File (`rename_history_YYYYMMDD_HHMM.json`) — Universal & Select-All Friendly
+- **Naming Pattern:** `rename_history_YYYYMMDD_HHMM.json` (e.g., `rename_history_20261014_2028.json`).
+- **No Leading Dot:** By deliberately avoiding a leading dot (not a hidden file), it is visibly present in file managers (Nautilus, Dolphin, Windows Explorer, macOS Finder).
+- **Batch Drag & Select-All Compatibility:** When you press `Ctrl+A` / `Cmd+A` to drag, upload, or sync files to Google Drive or Dropbox, the manifest is selected along with the documents rather than being skipped by hidden-file filters.
+- **Timestamped per Session/Batch:** If multiple renaming batches occur in the same folder over time, each session produces a distinct, non-destructive historical record without clobbering previous batches.
+
+```json
+{
+  "version": 1,
+  "session_timestamp": "2026-10-14T20:28:00Z",
+  "mappings": [
+    {
+      "current_name": "2026_Budget_Plan.json",
+      "original_name": "temp_export_1012.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "renamed_at": "2026-10-14T20:28:00Z"
+    }
+  ]
+}
+```
+
+- **Cloud Survivability & Restore:** When re-downloaded elsewhere, MagicRenamer can inspect the folder, detect `rename_history_*.json`, and map every single file back to its history or perform an undo operation.
+- **Key Advantages:**
+  - **Universal & Visible:** Easily included when selecting all files to upload or move.
+  - **Zero File Mutation:** Documents remain 100% clean and unaltered.
+  - **Immutable History:** Timestamped filenames provide an audit trail across multiple triage sessions.
+
+---
+
+## 7. Folder-Context Awareness Intelligence (Enabled by Default)
+
+To enable small local LLMs (3B-8B parameters with 2k-4k token limits) to generate naming suggestions that harmoniously fit into existing project directories, MagicRenamer implements a **structured, two-pass pipeline**:
+
+```
+ ┌──────────────────────────────────────────────────────────────┐
+ │ PASS 1: Directory Pre-Scan & Context Extraction (Fast Rust)   │
+ │ - Group files by extension, topic, or date cluster.          │
+ │ - Extract structural metadata & sample key terms.            │
+ │ - Read existing rename_history_*.json manifest for priors.   │
+ │ - Build a compact "Directory Blueprint" (150-300 tokens).    │
+ └──────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+ ┌──────────────────────────────────────────────────────────────┐
+ │ PASS 2: Context-Aware File Renaming Prompt (Local LLM)       │
+ │ System Prompt: Directory Blueprint + Consistency Rules       │
+ │ User Prompt: Target File Details + High-Signal Excerpt       │
+ │ Output: Clean JSON: { new_name, category, reason }           │
+ └──────────────────────────────────────────────────────────────┘
+```
+
+### 1. Default Configuration
+- **Default Status:** **Enabled by default** (`folder_context_enabled: true` in `config.json`).
+- **UI Toggle:** Checkbox in the Settings modal allowing users to disable context awareness if they want isolated file-only naming.
+
+### 2. Pass 1: The Compact "Directory Blueprint"
+Constructed instantly in Rust (<5ms) during directory scan or queue loading:
+1. **Parent Directory Theme:** Parent directory name (e.g. `Project_Apollo_Invoices` or `Taxes_2026`).
+2. **Detected Sibling Conventions:** Sample of existing sibling filenames to detect case styles (`kebab-case`, `snake_case`, `TitleCase`) and date formats (`YYYY-MM-DD`).
+3. **Prior Renames:** Top rules/categories extracted from existing `rename_history_*.json` in the folder.
+4. **Sequence Tracking:** Numerical indexing awareness (e.g. recognizing `invoice_003.pdf` so the next file is indexed consistently).
+
+```yaml
+Directory Context:
+  Parent Folder: "Project_Apollo_Q3_Invoices"
+  Detected Pattern: "YYYY-MM-DD_<Vendor>_<InvoiceNo>.<ext>"
+  Sibling Files:
+    - "2026-08-01_Acme_INV-101.pdf"
+    - "2026-08-15_Acme_INV-102.pdf"
+    - "2026-09-01_CloudHost_8921.txt"
+  Known Categories: [Invoices, Receipts, Contracts]
+```
+
+### 3. Smart Excerpting (Token Budget Optimization)
+Instead of dumping full contents, excerpts are tuned by file type to keep the per-file token budget around 50–150 tokens:
+- **PDF / DOCX:** Title metadata, document header, first paragraph.
+- **TXT / Markdown:** First 3 lines + headings + final line.
+- **JSON:** Root schema keys & array lengths (omitting huge array payloads).
+- **CSV:** Column headers + first 2 data rows.
+
+### 4. Structured Output Format
+When context awareness is enabled, the model returns JSON:
+```json
+{
+  "new_name": "2026-10-02_Hetzner_Cloud_Server.txt",
+  "category": "Receipt",
+  "reason": "Matched existing date format (YYYY-MM-DD), detected vendor 'Hetzner', and aligned with expense naming pattern."
+}
+```
+The UI uses `new_name` for the suggestion input and displays `category` and `reason` in the Preview & Details card as helpful AI rationale.
+
+### 5. Large Folder Guardrail & User Warning (>500-1,000 files)
+When scanning a directory with thousands of files:
+- **Challenge:** A folder containing thousands of heterogenous documents risks creating an excessively noisy blueprint or confusing local small parameter LLMs (which excel at focused, local consistency but degrade with massive multi-topic diversity).
+- **Guardrail Behavior:**
+  - If the discovered file count exceeds a threshold (e.g., 500+ files) and `folder_context_enabled` is active, MagicRenamer displays an interactive warning banner/modal before processing starts:
+    > ⚠️ **Large Folder Detected (X files)**: Folder-Context Awareness is currently enabled. Inferring conventions across very large, diverse directories may exceed the optimal capacity of local LLMs.
+  - **User Choices:**
+    1. **"Proceed with Context (Sampled)"**: Limits sibling sampling to the immediate subfolder or top 20 representative files.
+    2. **"Disable Context for this Run (Recommended)"**: Seamlessly falls back to independent, file-only triage without mutating permanent user settings.
+
+
+
+
