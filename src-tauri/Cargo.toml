@@ -2,7 +2,8 @@
 name = "magic-renamer"
 version = "0.1.0"
 description = "MagicRenamer - Local AI document triaging and renaming"
-authors = ["you"]
+authors = ["isojanis"]
+license = "MIT"
 edition = "2021"
 
 [build-dependencies]

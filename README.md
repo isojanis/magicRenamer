@@ -132,3 +132,10 @@ magicRenamer/
     └── src/
         └── main.rs      # Tauri commands (snippet extraction, Ollama call, rename)
 ```
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](file:///home/isojanis/development/magicRenamer/LICENSE) file for details.
+
