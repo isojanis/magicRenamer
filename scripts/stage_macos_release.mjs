@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +13,7 @@ const defaultQuery = (command, args) => execFileSync(command, args, { encoding: 
 
 export function stageMacosRelease(destination, target, {
   buildRoot = join(root, "src-tauri/target", target, "release"),
+  appFolder,
   query = defaultQuery,
   refType = process.env.GITHUB_REF_TYPE,
   refName = process.env.GITHUB_REF_NAME,
@@ -40,39 +40,27 @@ export function stageMacosRelease(destination, target, {
   }
   const dmg = join(dmgFolder, name);
   query("hdiutil", ["verify", dmg]);
-  const mount = mkdtempSync(join(tmpdir(), "magicrenamer-dmg-"));
-  let attached = false;
-  try {
-    query("hdiutil", ["attach", "-quiet", "-readonly", "-nobrowse", "-mountpoint", mount, dmg]);
-    attached = true;
-    const appFolder = join(mount, `${tauriConfig.productName}.app`);
-    const infoPlist = join(appFolder, "Contents", "Info.plist");
-    if (!existsSync(infoPlist)) throw new Error(`Missing macOS application bundle: ${appFolder}`);
-    const bundleVersion = query("plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist]);
-    if (bundleVersion !== version) throw new Error(`macOS app version: expected ${version}, found ${bundleVersion}`);
-    const executableName = query("plutil", ["-extract", "CFBundleExecutable", "raw", "-o", "-", infoPlist]);
-    if (!executableName || executableName.includes("/") || executableName.includes("\\")) throw new Error("Invalid CFBundleExecutable");
-    const executable = join(appFolder, "Contents", "MacOS", executableName);
-    const arches = query("lipo", ["-archs", executable]);
-    if (arches !== platform.arch) throw new Error(`macOS app architecture: expected ${platform.arch}, found ${arches}`);
+  const verifiedApp = appFolder ?? join(bundleRoot, "macos", `${tauriConfig.productName}.app`);
+  const infoPlist = join(verifiedApp, "Contents", "Info.plist");
+  if (!existsSync(infoPlist)) throw new Error(`Missing macOS application bundle: ${verifiedApp}`);
+  const bundleVersion = query("plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist]);
+  if (bundleVersion !== version) throw new Error(`macOS app version: expected ${version}, found ${bundleVersion}`);
+  const executableName = query("plutil", ["-extract", "CFBundleExecutable", "raw", "-o", "-", infoPlist]);
+  if (!executableName || executableName.includes("/") || executableName.includes("\\")) throw new Error("Invalid CFBundleExecutable");
+  const executable = join(verifiedApp, "Contents", "MacOS", executableName);
+  const arches = query("lipo", ["-archs", executable]);
+  if (arches !== platform.arch) throw new Error(`macOS app architecture: expected ${platform.arch}, found ${arches}`);
 
-    const resources = {
-      "../LICENSE": "licenses/LICENSE-MagicRenamer",
-      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
-    };
-    for (const [source, path] of Object.entries(resources)) {
-      if (tauriConfig.bundle?.resources?.[source] !== path) throw new Error(`Tauri bundle must include ${path}`);
-      const bundled = join(appFolder, "Contents", "Resources", path);
-      if (!existsSync(bundled)) throw new Error(`macOS app is missing bundled ${path}`);
-      if (!readFileSync(bundled).equals(readFileSync(resolve(root, "src-tauri", source)))) {
-        throw new Error(`macOS app has mismatched bundled ${path}`);
-      }
-    }
-  } finally {
-    try {
-      if (attached) query("hdiutil", ["detach", mount]);
-    } finally {
-      rmSync(mount, { recursive: true, force: true });
+  const resources = {
+    "../LICENSE": "licenses/LICENSE-MagicRenamer",
+    "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+  };
+  for (const [source, path] of Object.entries(resources)) {
+    if (tauriConfig.bundle?.resources?.[source] !== path) throw new Error(`Tauri bundle must include ${path}`);
+    const bundled = join(verifiedApp, "Contents", "Resources", path);
+    if (!existsSync(bundled)) throw new Error(`macOS app is missing bundled ${path}`);
+    if (!readFileSync(bundled).equals(readFileSync(resolve(root, "src-tauri", source)))) {
+      throw new Error(`macOS app has mismatched bundled ${path}`);
     }
   }
 
@@ -94,6 +82,6 @@ export function stageMacosRelease(destination, target, {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { folder } = stageMacosRelease(process.argv[2], process.argv[3]);
+  const { folder } = stageMacosRelease(process.argv[2], process.argv[3], { appFolder: process.argv[4] });
   console.log(`Staged verified macOS DMG under ${folder}`);
 }

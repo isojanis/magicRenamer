@@ -47,12 +47,18 @@ jobs:
       - name: Run tests
         run: npm run test:all
 
-      - name: Build DMG
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles dmg --ci
+      - name: Build application bundle
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles app --ci
+
+      - name: Preserve application bundle for verification
+        run: cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/MagicRenamer.app" "$RUNNER_TEMP/MagicRenamer.app"
+
+      - name: Build DMG from compiled application
+        run: npm run tauri -- bundle --target ${{ matrix.target }} --bundles dmg --ci
 
       - name: Verify and stage DMG
         id: stage
-        run: node scripts/stage_macos_release.mjs "$RUNNER_TEMP" "${{ matrix.target }}"
+        run: node scripts/stage_macos_release.mjs "$RUNNER_TEMP" "${{ matrix.target }}" "$RUNNER_TEMP/MagicRenamer.app"
 
       - name: Upload DMG for review
         uses: actions/upload-artifact@v7

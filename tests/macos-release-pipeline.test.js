@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -28,12 +28,12 @@ function fixture(arch, suffix) {
     if (command === "plutil") return args[1] === "CFBundleExecutable" ? "magic-renamer" : version;
     if (command === "lipo") return arch;
     if (command === "hdiutil") {
-      if (args[0] === "attach") cpSync(app, join(args[args.indexOf("-mountpoint") + 1], "MagicRenamer.app"), { recursive: true });
+      assert.deepEqual(args, ["verify", join(dmgFolder, dmgName)]);
       return "verified";
     }
     throw new Error(`Unexpected command ${command}`);
   };
-  return { temp, buildRoot, dmgName, query, contents };
+  return { temp, buildRoot, dmgName, query, contents, app };
 }
 
 test("stages verified Apple Silicon and Intel DMGs with bundled notices", () => {
@@ -66,6 +66,8 @@ test("rejects wrong architecture, mismatched tags, and missing bundled notices",
     }), /does not match/);
     rmSync(join(f.contents, "Resources", "licenses", "THIRD_PARTY_NOTICES.md"));
     assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", options), /missing bundled/);
+    rmSync(f.app, { recursive: true });
+    assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", options), /Missing macOS application bundle/);
   } finally {
     rmSync(f.temp, { recursive: true, force: true });
   }
