@@ -8,10 +8,10 @@ This fixture set contains small, synthetic local documents for manual scanning a
 
 All names, organizations, and amounts are fictional. No fixture contains private data.
 
-After generating the local corpus, run the fixture-backed Rust tests from the project root with:
+From the project root, run the headless Rust tests with:
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml --no-default-features fixture_tests
+npm run test:rust
 ```
 
-The `--no-default-features` mode omits the Tauri desktop runtime so these local parser and folder-scanning tests can run without WebKitGTK development packages.
+This generates the ignored fixture corpus first, then runs Rust tests with `--no-default-features`, which omits the Tauri desktop runtime and WebKitGTK requirement. Run the frontend tests with `npm test`, or both suites with `npm run test:all`. The real Ollama smoke test remains ignored unless explicitly selected and requires the configured local model.

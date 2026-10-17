@@ -101,6 +101,24 @@ npm run tauri dev
 
 ---
 
+## Tests
+
+Run the frontend tests with Node's built-in test runner:
+
+```bash
+npm test
+```
+
+Run the headless Rust tests, including fixture generation:
+
+```bash
+npm run test:rust
+```
+
+Run both suites with `npm run test:all`. The Rust suite does not require a running Ollama server; the optional live-model smoke test is ignored by default.
+
+---
+
 ## Building & Packaging
 
 To compile standalone desktop bundles for distribution:
@@ -120,12 +138,14 @@ The compiled binaries and installers will be placed under:
 ```text
 magicRenamer/
 ├── PLAN.md              # Architectural specification & design document
+├── TEST_PLAN.md         # Feature coverage plan
 ├── README.md            # Setup, development, and packaging instructions
 ├── package.json         # Node scripts & Tauri CLI tooling
 ├── index.html           # Three-pane UI markup
 ├── style.css            # Application styling
 ├── main.js              # Frontend triage controller & keyboard handlers
-└── src-tauri/           # Rust Tauri application
+├── tests/               # Frontend workflow tests
+└── src-tauri/           # Rust Tauri application and backend tests
     ├── Cargo.toml       # Backend crate dependencies
     ├── build.rs         # Tauri build hook
     ├── tauri.conf.json  # Tauri app and window configuration

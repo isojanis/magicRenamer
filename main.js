@@ -103,6 +103,16 @@ function getSelectedModel() {
   return selectOllamaModel.value || "qwen2.5-coder:7b";
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
 function updateCountsAndButtons() {
   queueCount.textContent = `${queue.length} files`;
   const readyCount = queue.filter((i) => i.status === "ready").length;
@@ -119,10 +129,10 @@ function renderQueue() {
     li.className = `file-item ${index === activeIndex ? "active" : ""}`;
     li.innerHTML = `
       <div class="file-item-info">
-        <span class="file-name" title="${item.path}">${item.suggestedName || item.name}</span>
-        <small class="file-orig-sub">${item.name}</small>
+        <span class="file-name" title="${escapeHtml(item.path)}">${escapeHtml(item.suggestedName || item.name)}</span>
+        <small class="file-orig-sub">${escapeHtml(item.name)}</small>
       </div>
-      <span class="status-badge ${item.status}">${item.status}</span>
+      <span class="status-badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
     `;
     li.addEventListener("click", () => selectItem(index));
     fileQueueList.appendChild(li);
@@ -167,18 +177,18 @@ function updatePreview(item) {
 
   previewContent.innerHTML = `
     <div class="file-card">
-      <div class="file-card-row"><strong>File:</strong> <span>${item.name}</span></div>
-      <div class="file-card-row"><strong>Extension:</strong> <span>.${item.extension}</span></div>
+      <div class="file-card-row"><strong>File:</strong> <span>${escapeHtml(item.name)}</span></div>
+      <div class="file-card-row"><strong>Extension:</strong> <span>.${escapeHtml(item.extension)}</span></div>
       <div class="file-card-row"><strong>Size:</strong> <span>${formatSize(item.size_bytes)}</span></div>
-      <div class="file-card-row"><strong>Path:</strong> <span class="path-break">${item.path}</span></div>
-      <div class="file-card-row"><strong>Status:</strong> <span class="status-badge ${item.status}">${item.status}</span></div>
-      ${item.category ? `<div class="file-card-row"><strong>Category:</strong> <span>${item.category}</span></div>` : ""}
-      ${item.reason ? `<div class="file-card-row"><strong>AI rationale:</strong> <span>${item.reason}</span></div>` : ""}
-      ${item.error ? `<div class="file-card-row"><strong>Issue:</strong> <span>${item.error}</span></div>` : ""}
+      <div class="file-card-row"><strong>Path:</strong> <span class="path-break">${escapeHtml(item.path)}</span></div>
+      <div class="file-card-row"><strong>Status:</strong> <span class="status-badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
+      ${item.category ? `<div class="file-card-row"><strong>Category:</strong> <span>${escapeHtml(item.category)}</span></div>` : ""}
+      ${item.reason ? `<div class="file-card-row"><strong>AI rationale:</strong> <span>${escapeHtml(item.reason)}</span></div>` : ""}
+      ${item.error ? `<div class="file-card-row"><strong>Issue:</strong> <span>${escapeHtml(item.error)}</span></div>` : ""}
     </div>
     <div class="preview-text-box">
       <h4>Document Preview Snippet</h4>
-      <pre>${item.snippet ? item.snippet : "(No snippet extracted yet. Run Process Queue to analyze)"}</pre>
+      <pre>${escapeHtml(item.snippet ? item.snippet : "(No snippet extracted yet. Run Process Queue to analyze)")}</pre>
     </div>
   `;
 }
