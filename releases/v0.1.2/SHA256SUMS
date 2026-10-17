@@ -1,0 +1,6 @@
+3bba78dc8b4b285f5a4d217bf587c7b140e33e277fbc0a00b4474107ccdc5815  linux-deb/MagicRenamer_0.1.2_amd64.deb
+c2bf1b11316b4a94cec0e2316c90b65312549ea8d6308eb4b4c710a0ecdea401  linux-rpm/MagicRenamer-0.1.2-1.x86_64.rpm
+71a7575f2a95d04628498310522d71654d12400ae5eec07f6e24e0dd1bf8c003  windows-x64/MagicRenamer_0.1.2_x64-setup.exe
+773aa5b2d208bd075d6ae25c9b71a89a97b4f8148e25486b967bec7deea96bd1  windows-arm64/MagicRenamer_0.1.2_arm64-setup.exe
+0fea8b8604529ced7bb07a5a273b225d9ed627c50607756675bf2de93a6f5eee  macos-apple-silicon/MagicRenamer_0.1.2_aarch64.dmg
+3ef63d0ef35c9e0bcea7e3acf8892031c1a4ebbc888adc8e32dcf15242314d60  macos-intel/MagicRenamer_0.1.2_x64.dmg
