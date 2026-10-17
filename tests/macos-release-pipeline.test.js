@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,7 +11,8 @@ const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 function fixture(arch, suffix) {
   const temp = mkdtempSync(join(tmpdir(), "magic-renamer-macos-release-"));
   const buildRoot = join(temp, "build");
-  const contents = join(buildRoot, "bundle", "macos", "MagicRenamer.app", "Contents");
+  const app = join(buildRoot, "bundle", "macos", "MagicRenamer.app");
+  const contents = join(app, "Contents");
   mkdirSync(join(contents, "MacOS"), { recursive: true });
   mkdirSync(join(contents, "Resources", "licenses"), { recursive: true });
   writeFileSync(join(contents, "Info.plist"), "fixture plist");
@@ -26,7 +27,10 @@ function fixture(arch, suffix) {
   const query = (command, args) => {
     if (command === "plutil") return args[1] === "CFBundleExecutable" ? "magic-renamer" : version;
     if (command === "lipo") return arch;
-    if (command === "hdiutil") return "verified";
+    if (command === "hdiutil") {
+      if (args[0] === "attach") cpSync(app, join(args[args.indexOf("-mountpoint") + 1], "MagicRenamer.app"), { recursive: true });
+      return "verified";
+    }
     throw new Error(`Unexpected command ${command}`);
   };
   return { temp, buildRoot, dmgName, query, contents };
@@ -55,7 +59,8 @@ test("rejects wrong architecture, mismatched tags, and missing bundled notices",
   const f = fixture("arm64", "aarch64");
   try {
     const options = { buildRoot: f.buildRoot, query: f.query, outputFile: null };
-    assert.throws(() => stageMacosRelease(f.temp, "x86_64-apple-darwin", options), /architecture/);
+    const wrongArch = { ...options, query: (command, args) => command === "lipo" ? "x86_64" : f.query(command, args) };
+    assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", wrongArch), /architecture/);
     assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", {
       ...options, refType: "tag", refName: "v99.0.0",
     }), /does not match/);

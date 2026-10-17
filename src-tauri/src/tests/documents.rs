@@ -53,7 +53,9 @@ fn recursively_scans_the_large_nested_fixture_batch() {
     assert_eq!(files.len(), 522, "the batch has 504 root files and 18 nested files");
     assert!(files.iter().any(|file| file.name.ends_with(".json")));
     assert!(files.iter().any(|file| file.name.ends_with(".csv")));
-    assert!(files.iter().any(|file| file.path.contains("/archive/")));
+    assert!(files.iter().any(|file| Path::new(&file.path).components().any(
+        |component| component.as_os_str() == std::ffi::OsStr::new("archive")
+    )));
 }
 
 #[tokio::test]
