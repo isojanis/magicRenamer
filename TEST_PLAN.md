@@ -1,12 +1,12 @@
 # MagicRenamer test plan
 
-This plan covers the implemented desktop workflow in `main.js` and the `src-tauri/src/` Rust modules. It is separate from the product roadmap in `PLAN.md`. The aim is confidence that a user can scan, inspect, name, rename, and restore local documents without losing data or sending document text to an external service.
+This plan covers the implemented desktop workflow in `main.js` and the `src-tauri/src/` Rust modules. It is separate from the product roadmap in `PLAN.md`. The aim is confidence that a user can scan, inspect, name, rename, and restore local documents without losing data or sending document text anywhere beyond the selected AI provider.
 
 ## Current baseline
 
-- Rust now has 32 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
+- Rust now has 44 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
 - `npm run test:rust` generates the ignored fixture corpus before running Rust tests, so a clean checkout does not need manually prepared documents.
-- `tests/frontend.test.js` adds a dependency-free Node test suite with nine workflow checks, a small DOM fake, and mocked Tauri calls. All nine pass under Node 20. The combined `npm run test:all` command has also been run successfully from the project terminal.
+- `tests/frontend.test.js` has fourteen dependency-free workflow checks, a small DOM fake, and mocked Tauri calls. All fourteen pass with the bundled Node runner. The same frontend and headless Rust suites are exposed through `npm run test:all`.
 - Desktop packaging and Linux/Windows smoke checks remain manual. Coverage does not yet include every P1 UI interaction or every document format named in the roadmap.
 
 ## Test approach
@@ -31,7 +31,10 @@ This plan covers the implemented desktop workflow in `main.js` and the `src-taur
 | Queue and controls | Pending → processing → ready/failed, retry failed item, regenerate, skip, approve, approve all, undo, button enablement, empty queue, selection changes during an async operation, and a batch of more than three files. Check the three-at-a-time limit and that one extraction failure does not block other items. | Frontend | P1 |
 | Settings and model choice | Default/missing/malformed config, load/save round trip, save failure, folder-context toggle, model selection, temperature clamp, reset, cancel, reopen, and persistence after restart. | Rust + frontend | P1 |
 | Desktop interaction and rendering | Native folder picker cancel/error, drag/drop behavior, Enter shortcut only in the intended context, modal focus, pane resize bounds and restored widths, status/preview text, and narrow-window layout. Render filenames, paths, snippets, and model text containing HTML special characters as text. | Frontend + desktop smoke | P1 |
-| Privacy and packaging | Stub server sees requests only to local Ollama; no external document-content request; Linux and Windows packaged app opens, can select a folder, read fixtures, and create/undo a rename in a disposable folder. | Integration + smoke | P1 |
+| Privacy and packaging | Ollama mode uses only a local endpoint; cloud mode sends only the prepared excerpt and context to the selected endpoint. API keys stay out of public config responses and tracked config.json; Linux and Windows packaged app opens, can select a folder, read fixtures, and create/undo a rename in a disposable folder. | Integration + smoke | P1 |
+| Cloud provider requests | Local HTTP stubs assert OpenAI/OpenRouter Bearer, Gemini x-goog-api-key, Anthropic x-api-key/version, model and JSON request shapes, response parsing, and no key in URL or error text. | Stubbed Rust integration | P0 |
+| Cloud settings | Switching providers updates suggested models, masked key status, endpoint visibility, active model, privacy badge, and Test Connection feedback. Saving a provider preserves other keys; clear-key action and legacy key migration are verified. | Frontend + Rust unit | P0 |
+| Queue cancellation | The active Process Queue button becomes Stop Processing. Stop during run setup, extraction, and in-flight AI work; no later batch starts, late results are discarded, unfinished files remain pending, and a new run can resume them. | Frontend + stubbed Rust integration | P0 |
 
 The safety cases are expected behavior. If a test exposes current code that overwrites an original file, accepts a path outside the selected folder, or inserts document text as HTML, fix that behavior rather than weakening the assertion.
 
@@ -46,7 +49,7 @@ The safety cases are expected behavior. If a test exposes current code that over
 ## Completion criteria
 
 - Every P0 matrix row has an automated success case and at least one meaningful failure or boundary case; every P1 row has automated coverage where practical and a documented desktop check for platform-dependent behavior.
-- The default test command passes from a clean checkout without a running Ollama service or an existing generated fixture corpus.
+- The default test command passes from a clean checkout without a running Ollama service, cloud API credentials, or an existing generated fixture corpus.
 - The optional local Ollama test and desktop smoke checks have separate commands and prerequisites; they do not make normal CI flaky.
 - CI runs frontend tests and headless Rust tests on each change, plus an application build. Run the packaged desktop smoke checklist on Linux and Windows before a release.
 - Track branch coverage for the rules and workflow code after the harness exists. Use it to find missed paths; do not substitute a percentage for the feature matrix above.

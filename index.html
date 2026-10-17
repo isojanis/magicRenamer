@@ -13,32 +13,72 @@
         <strong>MagicRenamer</strong>
       </div>
       <div class="header-settings">
-        <label for="select-ollama-model">Model:</label>
-        <select id="select-ollama-model" class="model-select">
-          <option value="qwen2.5-coder:7b" selected>qwen2.5-coder:7b</option>
-          <option value="qwen2.5-coder:14b">qwen2.5-coder:14b</option>
-          <option value="deepseek-r1:7b">deepseek-r1:7b</option>
-          <option value="deepseek-r1:14b">deepseek-r1:14b</option>
-          <option value="llama3:8b">llama3:8b</option>
-        </select>
+        <label for="select-ai-model">Model:</label>
+        <select id="select-ai-model" class="model-select" aria-label="Active AI model"></select>
+        <span id="provider-badge" class="provider-badge" title="AI provider used for document suggestions"></span>
       </div>
       <div class="header-actions">
         <button id="btn-select-folder" class="btn secondary">Choose Folder</button>
-        <button id="btn-prompt-settings" class="btn secondary" title="Edit AI Prompts & Config">Prompt Settings ⚙️</button>
-        <button id="btn-process-all" class="btn secondary" title="Run AI snippet extraction & suggestions for all pending files">Process Queue</button>
+        <button id="btn-prompt-settings" class="btn secondary" title="Configure AI provider, prompts, and naming">Settings ⚙️</button>
+        <button id="btn-process-all" class="btn secondary" title="Run AI snippet extraction and suggestions for pending files">Process Queue</button>
         <button id="btn-approve-all" class="btn primary" disabled>Approve All Ready</button>
       </div>
     </header>
 
-    <!-- Prompt Settings Modal -->
+    <!-- Settings Modal -->
     <div id="prompt-modal" class="modal-overlay hidden">
       <div class="modal-dialog">
         <div class="modal-header">
-          <h3>Prompt Configuration (config.json)</h3>
+          <h3>Settings</h3>
           <button id="btn-close-modal" class="btn-icon">&times;</button>
         </div>
         <div class="modal-body">
-          <p class="modal-hint">Edits are saved directly to <code>config.json</code> in your project directory.</p>
+          <p class="modal-hint">Settings are saved in <code>config.json</code>; API keys are saved in the ignored <code>config.local.json</code>. Cloud providers receive document excerpts and naming context when you process a file.</p>
+          <div class="field-row provider-settings">
+            <div class="field-group flex-1">
+              <div class="setting-label-row">
+                <label for="cfg-provider">AI Provider</label>
+                <span class="setting-help" role="img" tabindex="0" title="Choose local Ollama or a cloud API for filename suggestions." aria-label="Help for AI Provider: Choose local Ollama or a cloud API for filename suggestions.">?</span>
+              </div>
+              <select id="cfg-provider">
+                <option value="ollama">Ollama (Local)</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="openrouter">OpenRouter / Compatible</option>
+              </select>
+            </div>
+            <div class="field-group flex-1">
+              <div class="setting-label-row">
+                <label for="cfg-model">Default Model</label>
+                <span class="setting-help" role="img" tabindex="0" title="Choose a suggested model or enter another model ID. The Model menu at the top controls the active model." aria-label="Help for Default Model: Choose a suggested model or enter another model ID.">?</span>
+              </div>
+              <input type="text" id="cfg-model" list="cfg-model-suggestions" autocomplete="off" placeholder="Model ID" />
+              <datalist id="cfg-model-suggestions"></datalist>
+            </div>
+          </div>
+          <div id="cloud-credentials" class="field-group hidden">
+            <div class="setting-label-row">
+              <label for="cfg-api-key">API Key</label>
+              <span class="setting-help" role="img" tabindex="0" title="The key is saved in local config.local.json and sent to the selected provider. Leave blank to keep the saved key." aria-label="Help for API Key: The key stays in local config.local.json. Leave blank to keep the saved key.">?</span>
+            </div>
+            <input type="password" id="cfg-api-key" autocomplete="new-password" placeholder="Leave blank to keep saved key" />
+            <small id="cfg-key-status" class="setting-note"></small>
+            <label class="inline-checkbox"><input type="checkbox" id="cfg-clear-api-key" /> Remove saved key for this provider</label>
+          </div>
+          <div id="endpoint-setting" class="field-group">
+            <div class="setting-label-row">
+              <label for="cfg-custom-endpoint">Custom Endpoint URL (optional)</label>
+              <span class="setting-help" role="img" tabindex="0" title="Use an HTTPS API endpoint, or HTTP on localhost for Ollama and compatible local servers. Leave blank for the provider default." aria-label="Help for Custom Endpoint URL: Use HTTPS, or HTTP on localhost. Leave blank for the default.">?</span>
+            </div>
+            <input type="url" id="cfg-custom-endpoint" placeholder="Use provider default" />
+            <small class="setting-note">For Ollama, OpenAI, and OpenRouter-compatible APIs. Enter the full request URL.</small>
+          </div>
+          <div class="connection-test">
+            <button id="btn-test-provider" class="btn secondary" type="button">Test Connection</button>
+            <span id="provider-test-status" role="status" aria-live="polite"></span>
+          </div>
+          <small class="setting-note">Test Connection sends a small request to the selected provider and may incur a charge.</small>
           <div class="field-group">
             <div class="setting-label-row">
               <label for="cfg-system-prompt">System Prompt</label>
@@ -63,15 +103,8 @@
           <div class="field-row">
             <div class="field-group flex-1">
               <div class="setting-label-row">
-                <label for="cfg-model">Default Model</label>
-                <span class="setting-help" role="img" tabindex="0" title="Sets the saved Ollama model preference. The Model menu at the top controls the active model." aria-label="Help for Default Model: Sets the saved Ollama model preference. The top Model menu controls the active model.">?</span>
-              </div>
-              <input type="text" id="cfg-model" placeholder="e.g. qwen2.5-coder:7b" />
-            </div>
-            <div class="field-group flex-1">
-              <div class="setting-label-row">
                 <label for="cfg-temperature-num">Temperature (0.00 - 1.00)</label>
-                <span class="setting-help" role="img" tabindex="0" title="Controls how varied AI suggestions can be. Lower values usually give more consistent names; higher values allow more variety." aria-label="Help for Temperature: Lower values usually give more consistent names; higher values allow more variety.">?</span>
+                <span class="setting-help" role="img" tabindex="0" title="Controls variation where the selected model supports it. Some newer models use their own sampling settings and ignore this value." aria-label="Help for Temperature: Lower values usually give more consistent names; higher values allow more variety.">?</span>
               </div>
               <div class="slider-control">
                 <input

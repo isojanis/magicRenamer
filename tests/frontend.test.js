@@ -13,6 +13,12 @@ class FakeClassList {
   add(value) { this.values.add(value); }
   remove(value) { this.values.delete(value); }
   contains(value) { return this.values.has(value); }
+  toggle(value, force) {
+    const add = force === undefined ? !this.values.has(value) : force;
+    if (add) this.values.add(value);
+    else this.values.delete(value);
+    return add;
+  }
 }
 
 class FakeElement {
@@ -105,12 +111,16 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
   };
   const calls = [];
   const alerts = [];
+  let nextProcessingRunId = 0;
   const config = {
     system_prompt: "test system",
     prompt_template: "{text_snippet} {extension} {folder_context}",
     model: "test-model",
     temperature: 0.2,
     folder_context_enabled: true,
+    provider: "ollama",
+    custom_base_url: "",
+    configured_api_keys: { openai: false, gemini: false, anthropic: false, openrouter: false },
   };
   const invoke = async (command, args) => {
     calls.push({ command, args });
@@ -119,6 +129,8 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
     if (command === "scan_folder") return files;
     if (command === "build_directory_blueprint") return "local folder context";
     if (command === "extract_document_snippet") return "Report\nOrganization: Example Lab";
+    if (command === "begin_processing_run") return ++nextProcessingRunId;
+    if (command === "cancel_processing_run") return true;
     if (command === "suggest_filename_with_ollama") {
       return { new_name: `Example_Lab_Report.${args.extension}`, category: "Report", reason: "Matched source text" };
     }
@@ -126,7 +138,7 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
     if (command === "undo_rename_file") {
       return { restored_path: args.filePath, original_name: "original.pdf", source: "manifest" };
     }
-    if (command === "save_prompt_config") return true;
+    if (command === "save_prompt_config") return { ...args.config, configured_api_keys: config.configured_api_keys };
     return null;
   };
   const context = {
@@ -155,7 +167,7 @@ async function processQueue(ui) {
 test("loads a folder, processes files, and sends selected model and local context", async () => {
   const ui = createUi({ files: [fixture("report.pdf"), fixture("notes.txt", 1)] });
   await ui.flush();
-  ui.elements.get("select-ollama-model").value = "qwen2.5-coder:14b";
+  ui.elements.get("select-ai-model").value = "qwen2.5-coder:14b";
   await chooseFolder(ui);
   assert.equal(ui.elements.get("queue-count").textContent, "2 files");
   assert.equal(ui.elements.get("btn-approve-all").disabled, true);
@@ -308,7 +320,7 @@ test("settings clamp temperature and persist model and context toggle", async ()
   assert.equal(save.args.config.model, "custom-model");
   assert.equal(save.args.config.temperature, 1);
   assert.equal(save.args.config.folder_context_enabled, false);
-  assert.equal(ui.elements.get("select-ollama-model").value, "custom-model");
+  assert.equal(ui.elements.get("select-ai-model").value, "custom-model");
   assert.equal(ui.elements.get("prompt-modal").classList.contains("hidden"), true);
 });
 
@@ -337,4 +349,162 @@ test("document names, paths, snippets, and model text render as escaped text", a
   assert.ok(previewHtml.includes("&lt;svg"));
   assert.ok(!previewHtml.includes("<script>"));
   assert.ok(!previewHtml.includes("<svg"));
+});
+
+test("cloud provider settings select a model, keep keys masked, and show the data-sharing badge", async () => {
+  const ui = createUi({
+    behavior: {
+      save_prompt_config: ({ config }) => ({
+        ...config,
+        api_key: undefined,
+        configured_api_keys: { openai: true, gemini: false, anthropic: false, openrouter: false },
+      }),
+      test_ai_provider: ({ config }) => `Connected to ${config.provider} using ${config.model}.`,
+    },
+  });
+  await ui.flush();
+  await ui.elements.get("btn-prompt-settings").click();
+  const provider = ui.elements.get("cfg-provider");
+  provider.value = "openai";
+  await provider.dispatch("change");
+  assert.equal(ui.elements.get("cfg-model").value, "gpt-5.4-mini");
+  assert.equal(ui.elements.get("cloud-credentials").classList.contains("hidden"), false);
+  assert.match(readFileSync(new URL("../index.html", import.meta.url), "utf8"), /type="password" id="cfg-api-key"/);
+  ui.elements.get("cfg-api-key").value = "new-secret";
+  await ui.elements.get("btn-test-provider").click();
+  const connection = ui.calls.find((call) => call.command === "test_ai_provider");
+  assert.equal(connection.args.config.api_key, "new-secret");
+  assert.match(ui.elements.get("provider-test-status").textContent, /Connected to openai/);
+  await ui.elements.get("btn-save-modal").click();
+  assert.equal(ui.elements.get("provider-badge").textContent, "OpenAI · Cloud");
+  assert.match(ui.elements.get("provider-badge").title, /document excerpts and naming context/i);
+  assert.equal(ui.elements.get("select-ai-model").value, "gpt-5.4-mini");
+  assert.equal(ui.elements.get("cfg-api-key").value, "");
+  await ui.elements.get("btn-prompt-settings").click();
+  assert.match(ui.elements.get("cfg-key-status").textContent, /key is configured/);
+  assert.equal(ui.elements.get("cfg-api-key").value, "");
+});
+
+test("switching providers resets the endpoint draft and connection errors stay in the modal", async () => {
+  const ui = createUi({
+    behavior: {
+      test_ai_provider: () => { throw new Error("HTTP 401"); },
+    },
+  });
+  await ui.flush();
+  await ui.elements.get("btn-prompt-settings").click();
+  ui.elements.get("cfg-custom-endpoint").value = "http://localhost:11434/api/generate";
+  const provider = ui.elements.get("cfg-provider");
+  provider.value = "gemini";
+  await provider.dispatch("change");
+  assert.equal(ui.elements.get("cfg-model").value, "gemini-2.5-flash");
+  assert.equal(ui.elements.get("endpoint-setting").classList.contains("hidden"), true);
+  assert.equal(ui.elements.get("cfg-custom-endpoint").value, "");
+  await ui.elements.get("btn-test-provider").click();
+  assert.match(ui.elements.get("provider-test-status").textContent, /HTTP 401/);
+  assert.equal(ui.elements.get("btn-test-provider").disabled, false);
+  provider.value = "ollama";
+  await provider.dispatch("change");
+  assert.equal(ui.elements.get("cfg-custom-endpoint").value, "http://localhost:11434/api/generate");
+  assert.equal(ui.elements.get("cloud-credentials").classList.contains("hidden"), true);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test("Process Queue stops immediately and ignores late extraction after a resumed run", async () => {
+  const gates = [];
+  let holdExtraction = true;
+  const ui = createUi({
+    files: Array.from({ length: 5 }, (_, index) => fixture(`pending-${index}.txt`, index)),
+    behavior: {
+      extract_document_snippet: () => {
+        if (!holdExtraction) return "Report\nOrganization: Example Lab";
+        const gate = deferred();
+        gates.push(gate);
+        return gate.promise;
+      },
+    },
+  });
+  await ui.flush();
+  await chooseFolder(ui);
+  const firstRun = ui.elements.get("btn-process-all").click();
+  await ui.flush();
+  const button = ui.elements.get("btn-process-all");
+  assert.equal(button.textContent, "Stop Processing");
+  assert.equal(button.disabled, false);
+  assert.equal(gates.length, 3);
+
+  await button.click();
+  await firstRun;
+  assert.equal(button.textContent, "Process Queue");
+  assert.equal(button.disabled, false);
+  assert.equal(ui.calls.filter((call) => call.command === "cancel_processing_run").length, 1);
+  assert.equal(ui.calls.filter((call) => call.command === "suggest_filename_with_ollama").length, 0);
+  assert.equal((ui.elements.get("file-queue-list").innerHTML.match(/status-badge pending/g) || []).length, 5);
+
+  holdExtraction = false;
+  await button.click();
+  assert.equal(ui.calls.filter((call) => call.command === "begin_processing_run").length, 2);
+  assert.equal(ui.calls.filter((call) => call.command === "suggest_filename_with_ollama").length, 5);
+  assert.equal((ui.elements.get("file-queue-list").innerHTML.match(/status-badge ready/g) || []).length, 5);
+  for (const gate of gates) gate.resolve("Late extraction result");
+  await ui.flush();
+  assert.equal(ui.calls.filter((call) => call.command === "suggest_filename_with_ollama").length, 5);
+  assert.equal((ui.elements.get("file-queue-list").innerHTML.match(/status-badge ready/g) || []).length, 5);
+});
+
+test("stopping an in-flight AI batch discards late suggestions and starts no later batch", async () => {
+  const gates = [];
+  const ui = createUi({
+    files: Array.from({ length: 5 }, (_, index) => fixture(`pending-${index}.pdf`, index)),
+    behavior: {
+      suggest_filename_with_ollama: () => {
+        const gate = deferred();
+        gates.push(gate);
+        return gate.promise;
+      },
+    },
+  });
+  await ui.flush();
+  await chooseFolder(ui);
+  const firstRun = ui.elements.get("btn-process-all").click();
+  await ui.flush();
+  assert.equal(gates.length, 3);
+  await ui.elements.get("btn-process-all").click();
+  const began = ui.calls.find((call) => call.command === "begin_processing_run");
+  const cancelled = ui.calls.find((call) => call.command === "cancel_processing_run");
+  assert.equal(cancelled.args.processingRunId, 1);
+  assert.ok(began);
+  assert.ok(ui.calls.filter((call) => call.command === "suggest_filename_with_ollama")
+    .every((call) => call.args.processingRunId === 1));
+  for (const gate of gates) {
+    gate.resolve({ new_name: "Late_Suggestion.pdf", category: "Report", reason: "late" });
+  }
+  await firstRun;
+  assert.equal(ui.calls.filter((call) => call.command === "suggest_filename_with_ollama").length, 3);
+  assert.equal((ui.elements.get("file-queue-list").innerHTML.match(/status-badge ready/g) || []).length, 0);
+  assert.equal((ui.elements.get("file-queue-list").innerHTML.match(/status-badge failed/g) || []).length, 0);
+  assert.equal(ui.elements.get("btn-process-all").textContent, "Process Queue");
+});
+
+test("stopping before the backend assigns a run ID still cancels that run", async () => {
+  const begin = deferred();
+  const ui = createUi({
+    behavior: { begin_processing_run: () => begin.promise },
+  });
+  await ui.flush();
+  await chooseFolder(ui);
+  const firstRun = ui.elements.get("btn-process-all").click();
+  await ui.flush();
+  assert.equal(ui.elements.get("btn-process-all").textContent, "Stop Processing");
+  await ui.elements.get("btn-process-all").click();
+  assert.equal(ui.calls.filter((call) => call.command === "extract_document_snippet").length, 0);
+  begin.resolve(17);
+  await firstRun;
+  assert.equal(ui.calls.find((call) => call.command === "cancel_processing_run").args.processingRunId, 17);
+  assert.equal(ui.elements.get("btn-process-all").textContent, "Process Queue");
 });

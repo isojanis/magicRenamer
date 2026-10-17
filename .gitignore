@@ -34,3 +34,6 @@ Cargo.lock
 /test_docs/**
 !/test_docs/README.md
 !/test_docs/generate_fixtures.py
+
+# Per-user API credentials
+/config.local.json

@@ -226,6 +226,7 @@ async fn local_ollama_mixed_invoice_smoke() {
         Some("qwen2.5-coder:14b".to_string()),
         Some(build_directory_blueprint(folder.to_string_lossy().into_owned()).unwrap()),
         folder.join("download (20).pdf").to_string_lossy().into_owned(),
+        None,
     ).await;
     std::fs::remove_dir_all(&folder).unwrap();
     let result = result.expect("local model should suggest a usable filename");
@@ -246,26 +247,192 @@ async fn cloud_ai_provider_missing_key_errors_cleanly() {
         openai_api_key: String::new(),
         ..Default::default()
     };
-    // Unset env var if present for isolation
-    std::env::remove_var("OPENAI_API_KEY");
+    // Do not alter the process environment while other tests are running.
+    if ["OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"]
+        .iter().any(|name| std::env::var_os(name).is_some()) { return; }
     let err = query_ai_provider(&client, &config, "gpt-4o-mini", "sys", "prompt", 0.2, &schema, None)
         .await
         .unwrap_err();
-    assert!(err.contains("No API key configured for openai"), "{}", err);
+    assert!(err.contains("No openai API key configured"), "{}", err);
 
     // Gemini without key
     config.provider = "gemini".into();
-    std::env::remove_var("GEMINI_API_KEY");
     let err = query_ai_provider(&client, &config, "gemini-1.5-flash", "sys", "prompt", 0.2, &schema, None)
         .await
         .unwrap_err();
-    assert!(err.contains("No Gemini API key configured"), "{}", err);
+    assert!(err.contains("No gemini API key configured"), "{}", err);
 
     // Anthropic without key
     config.provider = "anthropic".into();
-    std::env::remove_var("ANTHROPIC_API_KEY");
     let err = query_ai_provider(&client, &config, "claude-3-5-haiku", "sys", "prompt", 0.2, &schema, None)
         .await
         .unwrap_err();
-    assert!(err.contains("No Anthropic API key configured"), "{}", err);
+    assert!(err.contains("No anthropic API key configured"), "{}", err);
+}
+
+async fn mock_provider_response(body: &str, status: u16) -> (String, tokio::task::JoinHandle<String>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let body = body.to_string();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0u8; 4096];
+            let size = stream.read(&mut chunk).await.unwrap();
+            assert!(size > 0);
+            bytes.extend_from_slice(&chunk[..size]);
+            if let Some(index) = find_subslice(&bytes, b"\r\n\r\n") { break index + 4; }
+        };
+        let headers = String::from_utf8_lossy(&bytes[..header_end]);
+        let content_length = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+        }).unwrap();
+        while bytes.len() < header_end + content_length {
+            let mut chunk = vec![0u8; header_end + content_length - bytes.len()];
+            let size = stream.read(&mut chunk).await.unwrap();
+            assert!(size > 0);
+            bytes.extend_from_slice(&chunk[..size]);
+        }
+        let response = format!("HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", status, body.len(), body);
+        stream.write_all(response.as_bytes()).await.unwrap();
+        String::from_utf8(bytes).unwrap()
+    });
+    (format!("http://{}/request", address), task)
+}
+
+#[tokio::test]
+async fn cloud_providers_send_correct_headers_and_parse_responses() {
+    let cases = [
+        ("openai", "Bearer key-openai", r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#),
+        ("openrouter", "Bearer key-openrouter", r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#),
+        ("gemini", "x-goog-api-key: key-gemini", r#"{"candidates":[{"content":{"parts":[{"text":"{\"ok\":"},{"text":"true}"}]}}]}"#),
+        ("anthropic", "x-api-key: key-anthropic", r#"{"content":[{"type":"text","text":"{\"ok\":true}"}]}"#),
+    ];
+    for (provider, expected_header, response) in cases {
+        let (endpoint, task) = mock_provider_response(response, 200).await;
+        let mut config = PromptConfig { provider: provider.into(), ..Default::default() };
+        match provider {
+            "openai" => config.openai_api_key = "key-openai".into(),
+            "openrouter" => config.openrouter_api_key = "key-openrouter".into(),
+            "gemini" => config.gemini_api_key = "key-gemini".into(),
+            "anthropic" => config.anthropic_api_key = "key-anthropic".into(),
+            _ => unreachable!(),
+        }
+        let output = query_ai_provider(&reqwest::Client::new(), &config, "sample-model", "system", "prompt", 0.2,
+            &serde_json::json!({}), Some(&endpoint)).await.unwrap();
+        assert_eq!(output, r#"{"ok":true}"#);
+        let request = task.await.unwrap();
+        let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+        assert!(headers.to_lowercase().contains(&expected_header.to_lowercase()), "{}: {}", provider, headers);
+        assert!(!headers.lines().next().unwrap().contains("key-"), "key leaked into URL");
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        if provider == "gemini" {
+            assert_eq!(json["contents"][0]["parts"][0]["text"], "prompt");
+            assert_eq!(json["generationConfig"]["responseMimeType"], "application/json");
+        } else if provider == "anthropic" {
+            assert_eq!(json["messages"][0]["content"], "prompt");
+            assert!(headers.to_lowercase().contains("anthropic-version: 2023-06-01"));
+        } else {
+            assert_eq!(json["messages"][1]["content"], "prompt");
+            assert_eq!(json["response_format"]["type"], "json_object");
+        }
+    }
+}
+
+#[test]
+fn custom_endpoints_reject_insecure_remote_hosts_and_url_credentials() {
+    assert!(validate_endpoint("https://api.example.test/v1/chat/completions").is_ok());
+    assert!(validate_endpoint("http://localhost:11434/api/generate").is_ok());
+    assert!(validate_endpoint("http://127.0.0.1:11434/api/generate").is_ok());
+    assert!(validate_endpoint("http://api.example.test/v1/chat/completions").is_err());
+    assert!(validate_endpoint("http://localhost.evil.test/request").is_err());
+    assert!(validate_endpoint("https://user:pass@api.example.test/request").is_err());
+    assert!(validate_endpoint("https://api.example.test/request?key=secret").is_err());
+}
+
+#[tokio::test]
+async fn provider_errors_do_not_echo_server_content_or_credentials() {
+    let (endpoint, task) = mock_provider_response("secret-key-in-error", 401).await;
+    let config = PromptConfig { provider: "openai".into(), openai_api_key: "secret-key".into(), ..Default::default() };
+    let error = query_ai_provider(&reqwest::Client::new(), &config, "model", "sys", "prompt", 0.2,
+        &serde_json::json!({}), Some(&endpoint)).await.unwrap_err();
+    assert!(error.contains("401"));
+    assert!(!error.contains("secret-key"));
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn connection_test_uses_synthetic_prompt_and_reports_success() {
+    let (endpoint, task) = mock_provider_response(r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#, 200).await;
+    let config = PromptConfig { provider: "openai".into(), model: "gpt-5.4-mini".into(), openai_api_key: "test-key".into(), ..Default::default() };
+    let status = test_ai_provider_with_config(&config, Some(&endpoint)).await.unwrap();
+    assert!(status.contains("Connected to openai"));
+    let request = task.await.unwrap();
+    assert!(request.contains("Return {\\\"ok\\\":true}."));
+    assert!(!request.contains("Document excerpt:"));
+}
+
+#[tokio::test]
+async fn newer_models_omit_unsupported_temperature() {
+    let cases = [
+        ("openai", "gpt-5.4-mini", r#"{"choices":[{"message":{"content":"{}"}}]}"#),
+        ("anthropic", "claude-haiku-5-5", r#"{"content":[{"type":"text","text":"{}"}]}"#),
+        ("openrouter", "openrouter/auto", r#"{"choices":[{"message":{"content":"{}"}}]}"#),
+    ];
+    for (provider, model, response) in cases {
+        let (endpoint, task) = mock_provider_response(response, 200).await;
+        let mut config = PromptConfig { provider: provider.into(), ..Default::default() };
+        match provider {
+            "openai" => config.openai_api_key = "test-key".into(),
+            "anthropic" => config.anthropic_api_key = "test-key".into(),
+            "openrouter" => config.openrouter_api_key = "test-key".into(),
+            _ => unreachable!(),
+        }
+        query_ai_provider(&reqwest::Client::new(), &config, model, "JSON", "{}", 0.2,
+            &serde_json::json!({}), Some(&endpoint)).await.unwrap();
+        let request = task.await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(body.get("temperature").is_none(), "{} should omit temperature", model);
+    }
+}
+
+#[tokio::test]
+async fn stopping_a_run_aborts_its_in_flight_ai_request_without_affecting_the_next_run() {
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio::time::{timeout, Duration};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/api/generate", listener.local_addr().unwrap());
+    let (accepted_sender, accepted_receiver) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        let _ = accepted_sender.send(());
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    });
+
+    let run_id = begin_processing_run();
+    let request = tokio::spawn(async move {
+        let work = suggest_filename_with_ollama_using_config(
+            "Report\nOrganization: Example Lab".into(), "txt".into(), None, None,
+            "/tmp/cancellable-report.txt".into(), PromptConfig::default(), &endpoint,
+        );
+        run_for_processing_run(run_id, work).await
+    });
+    timeout(Duration::from_secs(2), accepted_receiver).await.unwrap().unwrap();
+    assert!(cancel_processing_run(run_id));
+    let error = timeout(Duration::from_secs(2), request).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(error, PROCESSING_STOPPED);
+    server.abort();
+
+    let next_run = begin_processing_run();
+    assert_ne!(next_run, run_id);
+    assert!(!cancel_processing_run(run_id));
+    let result = run_for_processing_run(next_run, async { Ok::<_, String>(42) }).await.unwrap();
+    assert_eq!(result, 42);
+    assert!(cancel_processing_run(next_run));
 }

@@ -1,11 +1,14 @@
-use crate::config::{load_prompt_config, PromptConfig};
+use crate::config::{apply_config_update, load_prompt_config, PromptConfig, PromptConfigUpdate};
 use crate::naming::{
     document_kind, dominant_invoice_label, finalize_suggestion, find_document_date,
     parse_model_suggestion, relevant_sibling_names, FilenameSuggestion,
     FOLDER_CONTEXT_INSTRUCTIONS, UNIVERSAL_NAMING_INSTRUCTIONS,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use std::future::Future;
 use std::path::Path;
+use std::sync::OnceLock;
+use tokio::sync::watch;
 
 #[derive(Serialize)]
 struct OllamaGenerateRequest {
@@ -22,9 +25,48 @@ struct OllamaOptions {
     temperature: f32,
 }
 
-#[derive(Deserialize)]
-struct OllamaGenerateResponse {
-    response: String,
+const PROCESSING_STOPPED: &str = "Processing stopped.";
+
+fn processing_runs() -> &'static watch::Sender<u64> {
+    static RUNS: OnceLock<watch::Sender<u64>> = OnceLock::new();
+    RUNS.get_or_init(|| {
+        let (sender, _) = watch::channel(0);
+        sender
+    })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub(crate) fn begin_processing_run() -> u64 {
+    let mut run_id = 0;
+    processing_runs().send_modify(|current| {
+        *current = current.wrapping_add(1).max(1);
+        run_id = *current;
+    });
+    run_id
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub(crate) fn cancel_processing_run(processing_run_id: u64) -> bool {
+    processing_runs().send_if_modified(|current| {
+        if *current != processing_run_id { return false; }
+        *current = current.wrapping_add(1).max(1);
+        true
+    })
+}
+
+async fn run_for_processing_run<T>(processing_run_id: u64, work: impl Future<Output = Result<T, String>>) -> Result<T, String> {
+    let mut receiver = processing_runs().subscribe();
+    let cancelled = async move {
+        loop {
+            if *receiver.borrow() != processing_run_id { return; }
+            if receiver.changed().await.is_err() { return; }
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = cancelled => Err(PROCESSING_STOPPED.into()),
+        result = work => result,
+    }
 }
 
 /// Suggests a filename for one document using its content and only matching sibling names.
@@ -35,8 +77,9 @@ pub(crate) async fn suggest_filename_with_ollama(
     model: Option<String>,
     folder_context: Option<String>,
     file_path: String,
+    processing_run_id: Option<u64>,
 ) -> Result<FilenameSuggestion, String> {
-    suggest_filename_with_ollama_using_config(
+    let work = suggest_filename_with_ollama_using_config(
         text_snippet,
         extension,
         model,
@@ -44,7 +87,58 @@ pub(crate) async fn suggest_filename_with_ollama(
         file_path,
         load_prompt_config(),
         "http://localhost:11434/api/generate",
-    ).await
+    );
+    match processing_run_id {
+        Some(run_id) => run_for_processing_run(run_id, work).await,
+        None => work.await,
+    }
+}
+
+pub(crate) fn validate_endpoint(endpoint: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(endpoint).map_err(|_| "Enter a valid endpoint URL.".to_string())?;
+    let host = url.host_str().unwrap_or_default();
+    let local = matches!(host, "localhost" | "127.0.0.1" | "[::1]");
+    if url.scheme() != "https" && !(url.scheme() == "http" && local) {
+        return Err("Use HTTPS for remote endpoints, or HTTP on localhost.".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+        return Err("Endpoint URLs cannot contain credentials, query parameters, or fragments.".into());
+    }
+    Ok(url)
+}
+
+fn provider_key(config: &PromptConfig) -> String {
+    let (saved, env_name) = match config.provider.as_str() {
+        "openai" => (&config.openai_api_key, "OPENAI_API_KEY"),
+        "gemini" => (&config.gemini_api_key, "GEMINI_API_KEY"),
+        "anthropic" => (&config.anthropic_api_key, "ANTHROPIC_API_KEY"),
+        "openrouter" => (&config.openrouter_api_key, "OPENROUTER_API_KEY"),
+        _ => return String::new(),
+    };
+    if saved.is_empty() { std::env::var(env_name).unwrap_or_default() } else { saved.clone() }
+}
+
+fn provider_endpoint(config: &PromptConfig, model: &str, override_endpoint: Option<&str>) -> Result<reqwest::Url, String> {
+    let endpoint = if let Some(endpoint) = override_endpoint {
+        endpoint.to_string()
+    } else if !config.custom_base_url.is_empty() && matches!(config.provider.as_str(), "ollama" | "openai" | "openrouter") {
+        config.custom_base_url.clone()
+    } else {
+        match config.provider.as_str() {
+            "ollama" => "http://localhost:11434/api/generate".into(),
+            "openai" => "https://api.openai.com/v1/chat/completions".into(),
+            "openrouter" => "https://openrouter.ai/api/v1/chat/completions".into(),
+            "anthropic" => "https://api.anthropic.com/v1/messages".into(),
+            "gemini" => {
+                if !model.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+                    return Err("Gemini model contains unsupported characters.".into());
+                }
+                format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model)
+            }
+            _ => return Err("Choose a supported AI provider.".into()),
+        }
+    };
+    validate_endpoint(&endpoint)
 }
 
 async fn query_ai_provider(
@@ -57,209 +151,111 @@ async fn query_ai_provider(
     schema: &serde_json::Value,
     custom_endpoint: Option<&str>,
 ) -> Result<String, String> {
-    let provider = config.provider.to_lowercase();
-    match provider.as_str() {
+    let provider = config.provider.as_str();
+    let endpoint = provider_endpoint(config, model, custom_endpoint)?;
+    let key = provider_key(config);
+    if provider != "ollama" && key.is_empty() && !endpoint.host_str().is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]")) {
+        return Err(format!("No {} API key configured. Add it in Settings or set the provider environment variable.", provider));
+    }
+    let request = match provider {
         "openai" | "openrouter" => {
-            let (default_url, api_key, auth_header) = if provider == "openrouter" {
-                (
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    if !config.openrouter_api_key.is_empty() {
-                        config.openrouter_api_key.clone()
-                    } else {
-                        std::env::var("OPENROUTER_API_KEY").unwrap_or_default()
-                    },
-                    "Bearer",
-                )
-            } else {
-                (
-                    "https://api.openai.com/v1/chat/completions",
-                    if !config.openai_api_key.is_empty() {
-                        config.openai_api_key.clone()
-                    } else {
-                        std::env::var("OPENAI_API_KEY").unwrap_or_default()
-                    },
-                    "Bearer",
-                )
-            };
-
-            let endpoint = if let Some(url) = custom_endpoint {
-                url
-            } else if !config.custom_base_url.is_empty() {
-                &config.custom_base_url
-            } else {
-                default_url
-            };
-
-            if api_key.is_empty() && !endpoint.contains("localhost") && !endpoint.contains("127.0.0.1") {
-                return Err(format!("No API key configured for {}. Set it in Prompt Settings or environment variable.", provider));
-            }
-
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "model": model,
-                "temperature": temperature,
                 "messages": [
                     { "role": "system", "content": system_prompt },
                     { "role": "user", "content": prompt }
                 ],
                 "response_format": { "type": "json_object" }
             });
-
-            let mut req = client.post(endpoint).json(&payload);
-            if !api_key.is_empty() {
-                req = req.header("Authorization", format!("{} {}", auth_header, api_key));
+            if !(provider == "openai" && (model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with("o3") || model.starts_with("o4")))
+                && !(provider == "openrouter" && model == "openrouter/auto") {
+                payload["temperature"] = serde_json::json!(temperature);
             }
-
-            let response = req.send().await
-                .map_err(|error| format!("Failed to connect to {} ({}): {}", provider, endpoint, error))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("{} API returned error {}: {}", provider, status, err_text));
-            }
-
-            let res_json: serde_json::Value = response.json().await
-                .map_err(|error| format!("Failed to parse response from {}: {}", provider, error))?;
-
-            let content = res_json["choices"][0]["message"]["content"]
-                .as_str()
-                .ok_or_else(|| format!("Invalid response format from {}", provider))?;
-            Ok(content.to_string())
+            let mut request = client.post(endpoint).json(&payload);
+            if !key.is_empty() { request = request.bearer_auth(&key); }
+            request
         }
         "gemini" => {
-            let api_key = if !config.gemini_api_key.is_empty() {
-                config.gemini_api_key.clone()
-            } else {
-                std::env::var("GEMINI_API_KEY").unwrap_or_default()
-            };
-
-            if api_key.is_empty() {
-                return Err("No Gemini API key configured. Set it in Prompt Settings or GEMINI_API_KEY env var.".into());
-            }
-
-            let endpoint = if let Some(url) = custom_endpoint {
-                url.to_string()
-            } else {
-                format!(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                    model, api_key
-                )
-            };
-
             let payload = serde_json::json!({
-                "systemInstruction": {
-                    "parts": [{ "text": system_prompt }]
-                },
-                "contents": [
-                    { "parts": [{ "text": prompt }] }
-                ],
-                "generationConfig": {
-                    "temperature": temperature,
-                    "responseMimeType": "application/json"
-                }
+                "systemInstruction": { "parts": [{ "text": system_prompt }] },
+                "contents": [{ "parts": [{ "text": prompt }] }],
+                "generationConfig": { "temperature": temperature, "responseMimeType": "application/json" }
             });
-
-            let response = client.post(&endpoint)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|error| format!("Failed to connect to Gemini API: {}", error))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("Gemini API returned error {}: {}", status, err_text));
-            }
-
-            let res_json: serde_json::Value = response.json().await
-                .map_err(|error| format!("Failed to parse Gemini response: {}", error))?;
-
-            let content = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                .as_str()
-                .ok_or_else(|| "Invalid response format from Gemini".to_string())?;
-            Ok(content.to_string())
+            client.post(endpoint).header("x-goog-api-key", &key).json(&payload)
         }
         "anthropic" => {
-            let api_key = if !config.anthropic_api_key.is_empty() {
-                config.anthropic_api_key.clone()
-            } else {
-                std::env::var("ANTHROPIC_API_KEY").unwrap_or_default()
-            };
-
-            if api_key.is_empty() {
-                return Err("No Anthropic API key configured. Set it in Prompt Settings or ANTHROPIC_API_KEY env var.".into());
-            }
-
-            let endpoint = custom_endpoint.unwrap_or("https://api.anthropic.com/v1/messages");
-
-            let payload = serde_json::json!({
-                "model": model,
-                "system": system_prompt,
-                "messages": [
-                    { "role": "user", "content": prompt }
-                ],
-                "temperature": temperature,
-                "max_tokens": 1024
+            let mut payload = serde_json::json!({
+                "model": model, "system": system_prompt,
+                "messages": [{ "role": "user", "content": prompt }],
+                "max_tokens": 2048
             });
-
-            let response = client.post(endpoint)
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|error| format!("Failed to connect to Anthropic API: {}", error))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("Anthropic API returned error {}: {}", status, err_text));
+            if !model.starts_with("claude-haiku-5") && !model.starts_with("claude-sonnet-5")
+                && !model.starts_with("claude-opus-5") {
+                payload["temperature"] = serde_json::json!(temperature);
             }
-
-            let res_json: serde_json::Value = response.json().await
-                .map_err(|error| format!("Failed to parse Anthropic response: {}", error))?;
-
-            let content = res_json["content"][0]["text"]
-                .as_str()
-                .ok_or_else(|| "Invalid response format from Anthropic".to_string())?;
-            Ok(content.to_string())
+            client.post(endpoint).header("x-api-key", &key).header("anthropic-version", "2023-06-01").json(&payload)
         }
-        _ => {
-            // Default: local Ollama
-            let endpoint = if let Some(url) = custom_endpoint {
-                url
-            } else if !config.custom_base_url.is_empty() {
-                &config.custom_base_url
-            } else {
-                "http://localhost:11434/api/generate"
-            };
-
+        "ollama" => {
             let payload = OllamaGenerateRequest {
-                model: model.to_string(),
-                prompt: prompt.to_string(),
-                system: system_prompt.to_string(),
-                stream: false,
-                format: schema.clone(),
-                options: OllamaOptions { temperature },
+                model: model.to_string(), prompt: prompt.to_string(), system: system_prompt.to_string(),
+                stream: false, format: schema.clone(), options: OllamaOptions { temperature },
             };
-
-            let response = client.post(endpoint)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|error| format!("Failed to connect to Ollama (http://localhost:11434): {}", error))?;
-
-            if !response.status().is_success() {
-                return Err(format!("Ollama API returned error: {}", response.status()));
-            }
-
-            let generated: OllamaGenerateResponse = response.json().await
-                .map_err(|error| format!("Failed to parse Ollama response: {}", error))?;
-
-            Ok(generated.response)
+            client.post(endpoint).json(&payload)
         }
+        _ => return Err("Choose a supported AI provider.".into()),
+    };
+    // The client disables redirects so credentials and document text cannot be forwarded to another host.
+    let response = request.send().await.map_err(|_| {
+        if provider == "ollama" {
+            "Failed to connect to Ollama. Start Ollama, or choose a cloud provider and add its API key in Settings.".to_string()
+        } else {
+            format!("Failed to connect to {}. Check its endpoint and network connection.", provider)
+        }
+    })?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let guidance = match status.as_u16() {
+            401 | 403 => " Check the API key and account access.",
+            404 => " Check the model and endpoint URL.",
+            429 => " The provider rate limit was reached.",
+            _ => "",
+        };
+        return Err(format!("{} API returned HTTP {}.{}", provider, status, guidance));
     }
+    let json: serde_json::Value = response.json().await
+        .map_err(|_| format!("Failed to parse {} response.", provider))?;
+    let content = match provider {
+        "openai" | "openrouter" => json["choices"][0]["message"]["content"].as_str().map(str::to_string),
+        "gemini" => json["candidates"][0]["content"]["parts"].as_array().map(|parts| {
+            parts.iter().filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("")
+        }),
+        "anthropic" => json["content"].as_array().map(|parts| {
+            parts.iter().filter(|part| part["type"] == "text")
+                .filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("")
+        }),
+        "ollama" => json["response"].as_str().map(str::to_string),
+        _ => None,
+    };
+    content.filter(|text| !text.is_empty()).ok_or_else(|| format!("Invalid response format from {}.", provider))
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub(crate) async fn test_ai_provider(config: PromptConfigUpdate) -> Result<String, String> {
+    let config = apply_config_update(load_prompt_config(), config)?;
+    test_ai_provider_with_config(&config, None).await
+}
+
+async fn test_ai_provider_with_config(config: &PromptConfig, endpoint: Option<&str>) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|_| "Could not create HTTP client.".to_string())?;
+    let schema = serde_json::json!({
+        "type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]
+    });
+    query_ai_provider(&client, config, &config.model, "Respond only with JSON.", "Return {\"ok\":true}.",
+        config.temperature, &schema, endpoint).await?;
+    Ok(format!("Connected to {} using {}.", config.provider, config.model))
 }
 
 async fn suggest_filename_with_ollama_using_config(
@@ -271,7 +267,10 @@ async fn suggest_filename_with_ollama_using_config(
     config: PromptConfig,
     endpoint: &str,
 ) -> Result<FilenameSuggestion, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|_| "Could not create HTTP client.".to_string())?;
     let selected_model = model.unwrap_or(config.model.clone());
     let context_enabled = config.folder_context_enabled && folder_context.is_some();
     let original_name = Path::new(&file_path).file_name().and_then(|value| value.to_str()).unwrap_or("");

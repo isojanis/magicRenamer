@@ -1,12 +1,12 @@
 # MagicRenamer ✨
 
-MagicRenamer is a lightweight, cross-platform desktop application designed to triage and automatically rename poorly named archived files (e.g., `download (1).pdf`). It extracts text and metadata locally and queries a local LLM (via Ollama) to propose descriptive, standardized names (`YYYY-MM-DD_Topic.extension`).
+MagicRenamer is a lightweight, cross-platform desktop application designed to triage and automatically rename poorly named archived files (e.g., `download (1).pdf`). It extracts text and metadata locally, then queries Ollama or a selected cloud AI provider to propose descriptive, standardized names (`YYYY-MM-DD_Topic.extension`).
 
 ## Features
 
-- **Privacy-First:** All text extraction and LLM inference take place locally on your machine.
+- **Provider choice:** Text extraction stays local. Ollama keeps AI inference local; cloud providers receive the document excerpt and naming context used for a suggestion.
 - **Local Document Ingestion:** Extracts text from PDFs (`pdf-extract`), Office files (`office_oxide`), and plain text formats.
-- **Local AI Triage:** Generates suggested names via Ollama (`localhost:11434`).
+- **AI Triage:** Generates suggested names via Ollama (`localhost:11434`), OpenAI, Google Gemini, Anthropic Claude, or OpenRouter-compatible APIs.
 - **Three-Pane Workflow:** Interactive queue, triage approval zone, and document preview.
 
 ---
@@ -52,8 +52,8 @@ Tauri on Linux requires webkit2gtk and development libraries:
   sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget openssl appmenu-gtk-module libappindicator-gtk3 librsvg
   ```
 
-### 4. Ollama (Local AI Engine)
-MagicRenamer connects to Ollama running locally at `http://localhost:11434`.
+### 4. AI provider
+Ollama is the default and runs locally at `http://localhost:11434`. It is optional when you choose a cloud provider.
 1. Install [Ollama](https://ollama.com/).
 2. Pull the model used for suggestions (e.g., `qwen2.5-coder:7b` or `llama3:8b`):
    ```bash
@@ -68,20 +68,16 @@ MagicRenamer connects to Ollama running locally at `http://localhost:11434`.
 
 ## Configuration & Prompt Tuning
 
-Prompt settings are managed through [`config.json`](file:///home/isojanis/development/magicRenamer/config.json) in the project root:
+Open **Settings ⚙️** to choose Ollama, OpenAI, Google Gemini, Anthropic Claude, or OpenRouter / Compatible. The model field offers provider-specific suggestions and also accepts a model ID you enter. The header menu selects the model used for the next suggestion. Use **Test Connection** to send a small test request before processing documents; this may incur provider charges.
 
-```json
-{
-  "system_prompt": "You are a specialized file-naming assistant. Analyze the document snippet and return ONLY a single standardized filename in format: YYYY-MM-DD_Topic.ext (or Topic.ext if no date found). Do not include quotes, explanation, or markdown. Use alphanumeric characters, hyphens, and underscores only.",
-  "prompt_template": "Target extension: .{extension}\nDocument content snippet:\n\"\"\"\n{text_snippet}\n\"\"\"\nSuggested filename:",
-  "model": "qwen2.5-coder:7b",
-  "temperature": 0.2
-}
-```
+Set the provider API key in the masked field or through `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`. Leaving the field blank keeps the saved key. The checkbox removes the saved key for the selected provider. A custom endpoint accepts HTTPS, or HTTP on localhost, for Ollama and OpenAI-compatible providers. Enter the full request URL, such as `http://localhost:11434/api/generate` or `https://example.com/v1/chat/completions`.
 
-You can adjust prompts in two ways:
-1. **Directly in `config.json`**: Edit with any text editor at any time. Changes apply on subsequent triage runs.
-2. **From the UI**: Click the **"Prompt Settings ⚙️"** button in the header bar to open the in-app configuration editor.
+Prompt and model settings live in `config.json`. API keys live in the Git-ignored `config.local.json` with owner-only file permissions on Unix. Older inline keys are moved to that file when the app loads. Keep both files private when sharing the machine or backing up the project. For cloud providers, document excerpts, the original filename, and optional folder naming context are sent to the configured endpoint. The app does not send raw document files.
+
+The settings modal lets you edit the system prompt, user template, temperature, and folder context. Some newer models do not accept a custom temperature; the app omits that parameter for those models.
+
+During a queue run, **Process Queue** changes to **Stop Processing**. Stopping prevents later files from starting, cancels active AI requests, and returns unfinished files to pending so they can be processed later. A request already delivered to a cloud provider cannot be recalled.
+
 
 ---
 

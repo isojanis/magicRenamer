@@ -6,7 +6,7 @@
 
 **Key Constraints:**
 
-- **Privacy-First:** All processing, parsing, and AI summarization must happen entirely on the local machine. No external API calls.
+- **Privacy choice:** Parsing stays local. Ollama inference stays local; cloud inference sends the prepared document excerpt and naming context to the selected provider.
 - **Portability:** The application must compile into a standalone executable for both Linux and Windows.
 
 ## 2. Technical Stack
@@ -38,10 +38,10 @@ The Rust backend is responsible for file ingestion, text extraction, and coordin
 
 1. `scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, String>`: Recursively scans a directory for supported document formats (`pdf`, `docx`, `xlsx`, `doc`, `xls`, `txt`, `md`, `csv`) with metadata.
 2. `extract_document_snippet(file_path: String) -> Result<String, String>`: Determines the file extension, extracts text using the appropriate parser, and truncates it to 1000 characters.
-3. `suggest_filename_with_ollama(text_snippet: String, extension: String, model: Option<String>) -> Result<String, String>`: Posts the text snippet and system prompt loaded from `config.json` to the local Ollama API to generate a standardized filename.
+3. `suggest_filename_with_ollama(...) -> Result<FilenameSuggestion, String>`: Uses the selected provider for a naming suggestion. The command name remains for compatibility.
 4. `rename_file(old_path: String, new_path: String) -> Result<String, String>`: Safely renames the file on the local filesystem with collision handling.
-5. `get_prompt_config() -> Result<PromptConfig, String>`: Loads the current prompt template, system prompt, and model from `config.json`.
-6. `save_prompt_config(config: PromptConfig) -> Result<(), String>`: Persists modified prompts and parameters to `config.json`.
+5. `get_prompt_config() -> Result<PublicPromptConfig, String>`: Loads nonsecret settings and key-present flags.
+6. `save_prompt_config(config: PromptConfigUpdate) -> Result<PublicPromptConfig, String>`: Persists settings to `config.json` and saved keys to ignored `config.local.json`.
 
 ## 4. Frontend Architecture (UI/UX)
 
@@ -56,10 +56,10 @@ The UI handles the visual queue and triage workflow.
 **Interaction Flow:**
 
 - Native directory picker or drag-and-drop folder selection.
-- Batch processing using `Promise.allSettled()` with status transitions.
+- Batch processing using `Promise.allSettled()` with status transitions. The Process Queue button stops a run, cancels active AI requests, and leaves unfinished files pending.
 - "Approve All Ready" master button.
 - Keyboard shortcut support: `Enter` to approve suggestion and advance to the next ready file.
-- Header model selector matching available local Ollama models.
+- Header model selector matching the active provider.
 
 ## 5. Implementation Roadmap & Status
 
@@ -111,20 +111,21 @@ The UI handles the visual queue and triage workflow.
 ### Phase 5: Multi-Provider Cloud AI API Support (OpenAI, Gemini, Anthropic, OpenRouter) 🔄 (In Progress)
 - [x] Provider abstraction in Rust backend (`query_ai_provider` dispatcher):
   - [x] Local Ollama (`http://localhost:11434/api/generate`)
-  - [x] OpenAI (`api.openai.com/v1/chat/completions` — e.g. `gpt-4o-mini`, `gpt-4o`)
-  - [x] Google Gemini (`generativelanguage.googleapis.com/v1beta/models/...:generateContent` — e.g. `gemini-1.5-flash`, `gemini-2.0-flash`)
-  - [x] Anthropic Claude (`api.anthropic.com/v1/messages` — e.g. `claude-3-5-haiku`, `claude-3-5-sonnet`)
+  - [x] OpenAI (`api.openai.com/v1/chat/completions` — e.g. `gpt-5.4-mini`, `gpt-5.6-terra`)
+  - [x] Google Gemini (`generativelanguage.googleapis.com/v1beta/models/...:generateContent` — e.g. `gemini-2.5-flash`, `gemini-2.5-pro`)
+  - [x] Anthropic Claude (`api.anthropic.com/v1/messages` — e.g. `claude-haiku-5-5`, `claude-sonnet-5-5`)
   - [x] OpenRouter / Generic OpenAI-compatible endpoints (Groq, Together, DeepSeek, LocalAI)
 - [x] Secure API key management in backend:
-  - [x] Stored locally in `config.json` with zero external analytics/tracking.
+  - [x] Stored locally in Git-ignored `config.local.json` with owner-only permissions on Unix; no external analytics/tracking.
   - [x] Environment variable fallbacks supported (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`).
-- [ ] UI Provider & Model Selector in Settings modal:
-  - [ ] Dropdown for active Provider (`Ollama (Local)`, `OpenAI`, `Google Gemini`, `Anthropic`, `OpenRouter / Custom`).
-  - [ ] Dynamic model list per selected provider with fast/cost-effective defaults (e.g. `gpt-4o-mini`, `gemini-1.5-flash`, `claude-3-5-haiku`).
-  - [ ] API Key input with password-masking and "Test Connection" status indicator.
-  - [ ] Custom endpoint URL field for local/self-hosted or proxy deployments.
-- [ ] Fallback & Offline Graceful Handling:
-  - [ ] If Ollama is not installed or running, detect it and guide user to either start Ollama or configure a cloud API key.
+- [x] UI Provider & Model Selector in Settings modal:
+  - [x] Dropdown for active Provider (`Ollama (Local)`, `OpenAI`, `Google Gemini`, `Anthropic`, `OpenRouter / Custom`).
+  - [x] Dynamic model suggestions per selected provider, with an editable model ID.
+  - [x] API Key input with password-masking and "Test Connection" status indicator.
+  - [x] Custom endpoint URL field for local/self-hosted or proxy deployments.
+- [x] Fallback & Offline Graceful Handling:
+  - [x] If Ollama is not installed or running, guide the user to start Ollama or configure a cloud provider.
+- [ ] Live provider and packaged-desktop smoke checks with user-provided credentials and platform dependencies.
 
 
 ---
@@ -187,52 +188,25 @@ The large-folder warning remains available when more than 500 files are discover
 
 To support users who do not run local LLMs or lack dedicated GPU hardware, MagicRenamer provides a unified AI client layer supporting both local models and popular cloud AI APIs.
 
-### 1. Supported Providers
+### 1. Supported providers
 
-| Provider | Endpoint Format | Default Fast/Cheap Model | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **Ollama (Local)** | `http://localhost:11434/api/generate` | `qwen2.5-coder:7b` | Privacy-first, zero cost, 100% offline |
-| **OpenAI** | `https://api.openai.com/v1/chat/completions` | `gpt-4o-mini` | High quality, structured JSON schema output |
-| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/...` | `gemini-1.5-flash` / `gemini-2.0-flash` | Extremely fast, cost-effective, long context |
-| **Anthropic** | `https://api.anthropic.com/v1/messages` | `claude-3-5-haiku` | Exceptional reasoning & structured output |
-| **OpenRouter / Custom** | `https://openrouter.ai/api/v1/chat/completions` | `deepseek/deepseek-chat` | Universal gateway to hundreds of open/commercial models |
+| Provider | Default request endpoint | Suggested model |
+| :--- | :--- | :--- |
+| Ollama (local) | `http://localhost:11434/api/generate` | `qwen2.5-coder:7b` |
+| OpenAI | `https://api.openai.com/v1/chat/completions` | `gpt-5.4-mini` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/models/...:generateContent` | `gemini-2.5-flash` |
+| Anthropic Claude | `https://api.anthropic.com/v1/messages` | `claude-haiku-5-5` |
+| OpenRouter / Compatible | `https://openrouter.ai/api/v1/chat/completions` | `openrouter/auto` |
 
-### 2. Configuration Schema (`config.json`)
+The model field accepts a custom ID. OpenAI and OpenRouter use a Chat Completions request; Gemini uses `generateContent`; Anthropic uses Messages; Ollama uses `/api/generate`. The prepared excerpt and naming context follow the selected provider's request format. Responses all pass through `finalize_suggestion` for name validation.
 
-The configuration file is expanded to support provider selection and per-provider settings without exposing keys in plain sight:
+### 2. Configuration files
 
-```json
-{
-  "provider": "ollama",
-  "model": "qwen2.5-coder:7b",
-  "temperature": 0.2,
-  "folder_context_enabled": true,
-  "system_prompt": "You are a specialized file-naming assistant...",
-  "prompt_template": "...",
-  "providers": {
-    "ollama": {
-      "base_url": "http://localhost:11434"
-    },
-    "openai": {
-      "api_key": "",
-      "base_url": "https://api.openai.com/v1"
-    },
-    "gemini": {
-      "api_key": ""
-    },
-    "anthropic": {
-      "api_key": ""
-    },
-    "openrouter": {
-      "api_key": "",
-      "base_url": "https://openrouter.ai/api/v1"
-    }
-  }
-}
-```
+`config.json` holds the active provider, model, temperature, prompts, folder-context toggle, and optional full custom request URL. It remains compatible with older flat configuration files. Saved API keys are in ignored `config.local.json` beside it. Older inline keys are migrated into this companion file. Environment variables provide a fallback for each provider. The frontend receives key-present flags, never key values.
 
-### 3. API Key Security & Privacy Safeguards
-- **Zero Remote Storage:** API keys are stored only on the user's local disk inside `config.json` (or encrypted in OS Keyring / environment variables). Keys are never transmitted anywhere except directly to the selected provider's official endpoint via HTTPS.
-- **Privacy Notice:** When switching from `Ollama (Local)` to a cloud provider, the UI clearly displays a small privacy badge indicating that snippets will be sent over HTTPS to the selected cloud service.
-- **Unified Output Handling:** All providers feed through the exact same response sanitizer and validation pipeline in Rust (`finalize_suggestion`), ensuring consistent date formatting, separator normalization, collision protection, and generic name rejection regardless of the underlying LLM engine.
+### 3. Privacy and endpoint safeguards
 
+- The app shows a cloud badge when a cloud provider is active. Ollama inference stays local. Cloud inference sends the prepared excerpt, original filename, and optional naming context to the chosen provider.
+- Remote custom endpoints require HTTPS; HTTP is allowed only for localhost. URLs with credentials, query strings, or fragments are rejected. Redirects are disabled so request credentials and document text stay on the selected endpoint.
+- Gemini uses an `x-goog-api-key` header. API keys and provider error bodies are excluded from user-visible errors. API key files use owner-only permissions on Unix.
+- Test Connection sends a small synthetic prompt to the selected provider. A live cloud request may incur a small charge. Desktop smoke checks and live provider checks remain to be done outside the headless test suite.
