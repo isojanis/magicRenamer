@@ -11,9 +11,9 @@ function packages() {
   const bundleRoot = join(temp, "bundle");
   mkdirSync(join(bundleRoot, "deb"), { recursive: true });
   mkdirSync(join(bundleRoot, "rpm"), { recursive: true });
-  writeFileSync(join(bundleRoot, "deb", "MagicRenamer_0.1.0_amd64.deb"), "deb package contents");
-  writeFileSync(join(bundleRoot, "rpm", "MagicRenamer-0.1.0.x86_64.rpm"), "rpm package contents");
   const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+  writeFileSync(join(bundleRoot, "deb", `MagicRenamer_${version}_amd64.deb`), "deb package contents");
+  writeFileSync(join(bundleRoot, "rpm", `MagicRenamer-${version}.x86_64.rpm`), "rpm package contents");
   const query = (command, args) => {
     if (command === "dpkg-deb") {
       if (args[0] === "--contents") return "/usr/lib/magicrenamer/licenses/LICENSE-MagicRenamer\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_NOTICES.md";
@@ -30,8 +30,8 @@ test("stages one verified DEB and RPM with checksums in versioned release folder
   try {
     const { stage } = stageLinuxRelease(fixture.temp, { bundleRoot: fixture.bundleRoot, query: fixture.query, outputFile: null });
     for (const [folder, file, content] of [
-      ["linux-deb", "MagicRenamer_0.1.0_amd64.deb", "deb package contents"],
-      ["linux-rpm", "MagicRenamer-0.1.0.x86_64.rpm", "rpm package contents"],
+      ["linux-deb", `MagicRenamer_${fixture.version}_amd64.deb`, "deb package contents"],
+      ["linux-rpm", `MagicRenamer-${fixture.version}.x86_64.rpm`, "rpm package contents"],
     ]) {
       assert.equal(readFileSync(join(stage, folder, file), "utf8"), content);
       const hash = createHash("sha256").update(content).digest("hex");

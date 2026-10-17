@@ -4,7 +4,7 @@ Store packaged builds under `v<app version>/<target>/`. The version should match
 
 ```text
 releases/
-└── v0.1.0/
+└── v0.1.1/
     ├── windows-x64/
     ├── windows-arm64/
     ├── linux-deb/
