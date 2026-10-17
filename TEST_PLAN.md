@@ -1,10 +1,10 @@
 # MagicRenamer test plan
 
-This plan covers the implemented desktop workflow in `main.js` and `src-tauri/src/main.rs`. It is separate from the product roadmap in `PLAN.md`. The aim is confidence that a user can scan, inspect, name, rename, and restore local documents without losing data or sending document text to an external service.
+This plan covers the implemented desktop workflow in `main.js` and the `src-tauri/src/` Rust modules. It is separate from the product roadmap in `PLAN.md`. The aim is confidence that a user can scan, inspect, name, rename, and restore local documents without losing data or sending document text to an external service.
 
 ## Current baseline
 
-- Rust now has 31 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
+- Rust now has 32 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
 - `npm run test:rust` generates the ignored fixture corpus before running Rust tests, so a clean checkout does not need manually prepared documents.
 - `tests/frontend.test.js` adds a dependency-free Node test suite with nine workflow checks, a small DOM fake, and mocked Tauri calls. All nine pass under Node 20. The combined `npm run test:all` command has also been run successfully from the project terminal.
 - Desktop packaging and Linux/Windows smoke checks remain manual. Coverage does not yet include every P1 UI interaction or every document format named in the roadmap.

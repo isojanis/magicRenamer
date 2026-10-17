@@ -91,6 +91,7 @@ let currentConfig = null;
 
 // Keyboard shortcuts: Enter to approve
 window.addEventListener("keydown", (e) => {
+  if (!promptModal.classList.contains("hidden")) return;
   if (e.key === "Enter" && !e.shiftKey && document.activeElement !== textSnippet) {
     e.preventDefault();
     if (activeIndex >= 0 && !btnApprove.disabled) {

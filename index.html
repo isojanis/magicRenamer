@@ -40,24 +40,39 @@
         <div class="modal-body">
           <p class="modal-hint">Edits are saved directly to <code>config.json</code> in your project directory.</p>
           <div class="field-group">
-            <label for="cfg-system-prompt">System Prompt</label>
+            <div class="setting-label-row">
+              <label for="cfg-system-prompt">System Prompt</label>
+              <span class="setting-help" role="img" tabindex="0" title="Instructions that guide the AI's naming style and response format for every suggestion." aria-label="Help for System Prompt: Instructions that guide the AI's naming style and response format for every suggestion.">?</span>
+            </div>
             <textarea id="cfg-system-prompt" rows="4" placeholder="System prompt..."></textarea>
           </div>
           <div class="field-group">
-            <label for="cfg-prompt-template">User Prompt Template (use <code>{extension}</code>, <code>{text_snippet}</code>, and <code>{folder_context}</code>)</label>
+            <div class="setting-label-row">
+              <label for="cfg-prompt-template">User Prompt Template (use <code>{extension}</code>, <code>{text_snippet}</code>, and <code>{folder_context}</code>)</label>
+              <span class="setting-help" role="img" tabindex="0" title="Message sent for each document. These placeholders are replaced with the current file's extension, excerpt, and folder context." aria-label="Help for User Prompt Template: This message is sent for each document. Placeholders are replaced with the current file's details.">?</span>
+            </div>
             <textarea id="cfg-prompt-template" rows="5" placeholder="Prompt template..."></textarea>
           </div>
           <div class="field-group context-setting">
-            <label><input type="checkbox" id="cfg-folder-context-enabled" /> Use folder naming context by default</label>
+            <div class="setting-label-row">
+              <label><input type="checkbox" id="cfg-folder-context-enabled" /> Use folder naming context</label>
+              <span class="setting-help" role="img" tabindex="0" title="Uses nearby filenames and local rename history to guide suggestions. Turn it off to omit folder context." aria-label="Help for folder naming context: Uses nearby filenames and local rename history to guide suggestions.">?</span>
+            </div>
             <small>Uses nearby filenames and local rename history when preparing suggestions.</small>
           </div>
           <div class="field-row">
             <div class="field-group flex-1">
-              <label for="cfg-model">Default Model</label>
+              <div class="setting-label-row">
+                <label for="cfg-model">Default Model</label>
+                <span class="setting-help" role="img" tabindex="0" title="Sets the saved Ollama model preference. The Model menu at the top controls the active model." aria-label="Help for Default Model: Sets the saved Ollama model preference. The top Model menu controls the active model.">?</span>
+              </div>
               <input type="text" id="cfg-model" placeholder="e.g. qwen2.5-coder:7b" />
             </div>
             <div class="field-group flex-1">
-              <label for="cfg-temperature-num">Temperature (0.00 - 1.00)</label>
+              <div class="setting-label-row">
+                <label for="cfg-temperature-num">Temperature (0.00 - 1.00)</label>
+                <span class="setting-help" role="img" tabindex="0" title="Controls how varied AI suggestions can be. Lower values usually give more consistent names; higher values allow more variety." aria-label="Help for Temperature: Lower values usually give more consistent names; higher values allow more variety.">?</span>
+              </div>
               <div class="slider-control">
                 <input
                   type="range"

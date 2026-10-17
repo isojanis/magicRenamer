@@ -150,7 +150,14 @@ magicRenamer/
     ├── build.rs         # Tauri build hook
     ├── tauri.conf.json  # Tauri app and window configuration
     └── src/
-        └── main.rs      # Tauri commands (snippet extraction, Ollama call, rename)
+        ├── main.rs      # Tauri startup and command registration
+        ├── config.rs    # Prompt settings and persistence
+        ├── documents.rs # Folder scan and document excerpts
+        ├── naming.rs    # Dates, folder context, and filename rules
+        ├── ai.rs        # Suggestions and provider requests
+        ├── rename.rs    # Safe rename, undo, and history manifests
+        ├── test_support.rs # Shared Rust test fixtures and temp folders
+        └── tests/       # Rust tests grouped by feature
 ```
 
 ---

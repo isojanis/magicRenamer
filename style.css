@@ -519,6 +519,40 @@ textarea {
   border-radius: 4px;
 }
 
+.setting-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-help {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--text-muted);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: help;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.setting-help:hover,
+.setting-help:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.setting-help:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .field-row {
   display: flex;
   gap: 16px;

@@ -84,6 +84,7 @@ function fixture(name, index = 0) {
 
 function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResult = true } = {}) {
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
+  elements.get("prompt-modal").classList.add("hidden");
   const document = {
     body: new FakeElement("body"),
     activeElement: null,
@@ -282,6 +283,11 @@ test("Enter approves the active suggestion while Shift+Enter does not", async ()
   await ui.window.dispatch("keydown", { key: "Enter", shiftKey: true });
   await ui.flush();
   assert.equal(ui.calls.filter((call) => call.command === "rename_file").length, 0);
+  await ui.elements.get("btn-prompt-settings").click();
+  await ui.window.dispatch("keydown", { key: "Enter", shiftKey: false });
+  await ui.flush();
+  assert.equal(ui.calls.filter((call) => call.command === "rename_file").length, 0);
+  await ui.elements.get("btn-close-modal").click();
   await ui.window.dispatch("keydown", { key: "Enter", shiftKey: false });
   await ui.flush();
   assert.equal(ui.calls.filter((call) => call.command === "rename_file").length, 1);
