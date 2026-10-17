@@ -88,7 +88,7 @@ function fixture(name, index = 0) {
   };
 }
 
-function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResult = true } = {}) {
+function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResult = true, dialogResult = "/docs" } = {}) {
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
   elements.get("prompt-modal").classList.add("hidden");
   const document = {
@@ -145,8 +145,9 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
     window,
     document,
     localStorage,
+    URL,
     invoke,
-    openDialog: async () => "/docs",
+    openDialog: async () => dialogResult,
     alert: (message) => alerts.push(String(message)),
     prompt: () => "/docs",
     console: { log() {}, error() {} },
@@ -507,4 +508,44 @@ test("stopping before the backend assigns a run ID still cancels that run", asyn
   await firstRun;
   assert.equal(ui.calls.find((call) => call.command === "cancel_processing_run").args.processingRunId, 17);
   assert.equal(ui.elements.get("btn-process-all").textContent, "Process Queue");
+});
+
+test("remote Ollama endpoint shows document sharing instead of local badge", async () => {
+  const ui = createUi({
+    behavior: {
+      get_prompt_config: () => ({
+        system_prompt: "", prompt_template: "", model: "qwen2.5-coder:7b",
+        temperature: 0.2, folder_context_enabled: true, provider: "ollama",
+        custom_base_url: "https://ollama.example.test/api/generate",
+        configured_api_keys: { openai: false, gemini: false, anthropic: false, openrouter: false },
+      }),
+    },
+  });
+  await ui.flush();
+  const badge = ui.elements.get("provider-badge");
+  assert.equal(badge.textContent, "Ollama · Remote");
+  assert.equal(badge.classList.contains("cloud"), true);
+  assert.match(badge.title, /https:\/\/ollama\.example\.test/);
+});
+
+
+test("imports previous settings through explicit file selection", async () => {
+  const imported = {
+    system_prompt: "imported system", prompt_template: "{text_snippet}",
+    model: "imported-model", temperature: 0.4, folder_context_enabled: false,
+    provider: "openai", custom_base_url: "",
+    configured_api_keys: { openai: true, gemini: false, anthropic: false, openrouter: false },
+  };
+  const ui = createUi({
+    dialogResult: "/old/config.json",
+    behavior: { import_prompt_config: () => imported },
+  });
+  await ui.flush();
+  await ui.elements.get("btn-prompt-settings").click();
+  await ui.elements.get("btn-import-settings").click();
+  assert.equal(ui.calls.find((call) => call.command === "import_prompt_config").args.filePath, "/old/config.json");
+  assert.equal(ui.elements.get("cfg-system-prompt").value, "imported system");
+  assert.equal(ui.elements.get("cfg-provider").value, "openai");
+  assert.equal(ui.elements.get("provider-badge").textContent, "OpenAI · Cloud");
+  assert.match(ui.elements.get("provider-test-status").textContent, /Settings imported/);
 });

@@ -35,7 +35,8 @@ fn main() {
             rename::rename_file,
             rename::undo_rename_file,
             config::get_prompt_config,
-            config::save_prompt_config
+            config::save_prompt_config,
+            config::import_prompt_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

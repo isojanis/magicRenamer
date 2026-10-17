@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PromptConfig {
@@ -140,21 +141,21 @@ impl Default for PromptConfig {
     }
 }
 
-fn get_config_path() -> std::path::PathBuf {
-    // Check current working directory, then relative to exe, fallback to default in pwd
-    let local = Path::new("config.json");
-    if local.exists() {
-        return local.to_path_buf();
+fn get_config_path() -> Result<PathBuf, String> {
+    let base = dirs::config_dir().ok_or_else(|| "Could not locate the user configuration directory.".to_string())?;
+    let folder = base.join("MagicRenamer");
+    fs::create_dir_all(&folder).map_err(|error| format!("Could not create the application settings directory: {}", error))?;
+    let metadata = fs::symlink_metadata(&folder)
+        .map_err(|error| format!("Could not inspect the application settings directory: {}", error))?;
+    if !metadata.file_type().is_dir() {
+        return Err("The application settings directory must not be a symlink.".into());
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let candidate = parent.join("config.json");
-            if candidate.exists() {
-                return candidate;
-            }
-        }
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not secure the application settings directory: {}", error))?;
     }
-    local.to_path_buf()
+    Ok(folder.join("config.json"))
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -190,57 +191,96 @@ fn api_keys_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name("config.local.json")
 }
 
-fn load_prompt_config_at(path: &Path) -> PromptConfig {
-    if let Ok(content) = fs::read_to_string(path) {
+fn read_optional_config_file(path: &Path) -> Result<Option<String>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            Err(format!("Settings path is not a regular file: {}", path.display()))
+        }
+        Ok(_) => fs::read_to_string(path).map(Some)
+            .map_err(|error| format!("Could not read settings file: {}", error)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Could not inspect settings file: {}", error)),
+    }
+}
+
+fn load_prompt_config_at(path: &Path) -> Result<PromptConfig, String> {
+    if let Some(content) = read_optional_config_file(path)? {
         if let Ok(mut cfg) = serde_json::from_str::<PromptConfig>(&content) {
             let key_path = api_keys_path(path);
             let had_inline_keys = !StoredApiKeys::from_config(&cfg).is_empty();
-            if let Ok(keys_json) = fs::read_to_string(&key_path) {
-                if let Ok(keys) = serde_json::from_str::<StoredApiKeys>(&keys_json) {
-                    keys.apply_to(&mut cfg);
-                    if had_inline_keys { let _ = write_public_config_at(path, &cfg); }
-                }
+            if let Some(keys_json) = read_optional_config_file(&key_path)? {
+                let keys: StoredApiKeys = serde_json::from_str(&keys_json)
+                    .map_err(|_| "Saved API key file is not valid JSON.".to_string())?;
+                keys.apply_to(&mut cfg);
+                if had_inline_keys { write_public_config_at(path, &cfg)?; }
             } else if had_inline_keys {
-                // Migrate older inline credentials to the ignored local file.
-                let _ = save_prompt_config_at(path, &cfg);
+                save_prompt_config_at(path, &cfg)?;
             }
-            return cfg;
+            return Ok(cfg);
         }
     }
     let mut default_cfg = PromptConfig::default();
-    if let Ok(keys_json) = fs::read_to_string(api_keys_path(path)) {
-        if let Ok(keys) = serde_json::from_str::<StoredApiKeys>(&keys_json) {
-            keys.apply_to(&mut default_cfg);
-        }
+    if let Some(keys_json) = read_optional_config_file(&api_keys_path(path))? {
+        let keys: StoredApiKeys = serde_json::from_str(&keys_json)
+            .map_err(|_| "Saved API key file is not valid JSON.".to_string())?;
+        keys.apply_to(&mut default_cfg);
     }
-    let _ = write_public_config_at(path, &default_cfg);
-    default_cfg
+    write_public_config_at(path, &default_cfg)?;
+    Ok(default_cfg)
 }
 
-pub(crate) fn load_prompt_config() -> PromptConfig {
-    load_prompt_config_at(&get_config_path())
+pub(crate) fn load_prompt_config() -> Result<PromptConfig, String> {
+    load_prompt_config_at(&get_config_path()?)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) fn get_prompt_config() -> Result<PublicPromptConfig, String> {
-    Ok(PublicPromptConfig::from(&load_prompt_config()))
+    Ok(PublicPromptConfig::from(&load_prompt_config()?))
 }
 
+static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn write_private_file(path: &Path, data: &str) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600)
-            .open(path).map_err(|e| format!("Failed to open config file: {}", e))?;
-        file.write_all(data.as_bytes()).map_err(|e| format!("Failed to write config file: {}", e))?;
-        let mut permissions = file.metadata().map_err(|e| e.to_string())?.permissions();
-        permissions.set_mode(0o600);
-        file.set_permissions(permissions).map_err(|e| e.to_string())?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!("Settings path is not a regular file: {}", path.display()));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not inspect settings path: {}", error)),
     }
-    #[cfg(not(unix))]
-    fs::write(path, data).map_err(|e| format!("Failed to write config file: {}", e))?;
-    Ok(())
+    let parent = path.parent().ok_or_else(|| "Settings path has no parent directory.".to_string())?;
+    let parent_metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("Could not inspect settings directory: {}", error))?;
+    if !parent_metadata.file_type().is_dir() {
+        return Err("Settings directory must not be a symlink.".into());
+    }
+    let nonce = SETTINGS_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp = parent.join(format!(".magicrenamer-settings-{}-{nonce}.tmp", std::process::id()));
+    let result = (|| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp).map_err(|error| format!("Could not create temporary settings file: {}", error))?;
+        use std::io::Write;
+        file.write_all(data.as_bytes()).map_err(|error| format!("Could not write settings file: {}", error))?;
+        file.sync_all().map_err(|error| format!("Could not sync settings file: {}", error))?;
+        drop(file);
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Err(format!("Settings path is not a regular file: {}", path.display()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not inspect settings path: {}", error)),
+        }
+        fs::rename(&temp, path).map_err(|error| format!("Could not replace settings file: {}", error))
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temp); }
+    result
 }
 
 fn write_public_config_at(path: &Path, config: &PromptConfig) -> Result<(), String> {
@@ -268,9 +308,40 @@ fn save_prompt_config_at(path: &Path, config: &PromptConfig) -> Result<(), Strin
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) fn save_prompt_config(config: PromptConfigUpdate) -> Result<PublicPromptConfig, String> {
-    let merged = apply_config_update(load_prompt_config(), config)?;
-    save_prompt_config_at(&get_config_path(), &merged)?;
+    let merged = apply_config_update(load_prompt_config()?, config)?;
+    save_prompt_config_at(&get_config_path()?, &merged)?;
     Ok(PublicPromptConfig::from(&merged))
+}
+
+fn import_prompt_config_at(source: &Path, destination: &Path) -> Result<PromptConfig, String> {
+    if source == destination { return Err("Choose a previous settings file to import.".into()); }
+    if source.file_name().and_then(|name| name.to_str()) != Some("config.json") {
+        return Err("Choose the previous config.json file.".into());
+    }
+    let content = read_optional_config_file(source)?
+        .ok_or_else(|| "Previous settings file does not exist.".to_string())?;
+    let mut config: PromptConfig = serde_json::from_str(&content)
+        .map_err(|_| "Previous settings file is not valid JSON.".to_string())?;
+    if !valid_provider(&config.provider) || config.model.trim().is_empty()
+        || !config.temperature.is_finite() || !(0.0..=2.0).contains(&config.temperature)
+    {
+        return Err("Previous settings contain an invalid provider, model, or temperature.".into());
+    }
+    if !config.custom_base_url.is_empty() { crate::ai::validate_endpoint(&config.custom_base_url)?; }
+    if let Some(keys_json) = read_optional_config_file(&api_keys_path(source))? {
+        let keys: StoredApiKeys = serde_json::from_str(&keys_json)
+            .map_err(|_| "Previous API key file is not valid JSON.".to_string())?;
+        keys.apply_to(&mut config);
+    }
+    save_prompt_config_at(destination, &config)?;
+    Ok(config)
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub(crate) fn import_prompt_config(file_path: String) -> Result<PublicPromptConfig, String> {
+    let source = Path::new(&file_path);
+    let imported = import_prompt_config_at(source, &get_config_path()?)?;
+    Ok(PublicPromptConfig::from(&imported))
 }
 
 #[cfg(test)]

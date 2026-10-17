@@ -13,7 +13,14 @@ pub struct DiscoveredFile {
     pub size_bytes: u64,
 }
 
-/// Recursively scans a directory for supported document formats (pdf, docx, xlsx, doc, xls, txt, md, csv)
+fn is_app_data_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return false; };
+    let name = name.to_ascii_lowercase();
+    matches!(name.as_str(), "config.json" | "config.local.json")
+        || (name.starts_with("rename_history_") && name.ends_with(".json"))
+}
+
+/// Recursively scans a directory for supported document formats.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) fn scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, String> {
     let p = Path::new(&folder_path);
@@ -27,6 +34,7 @@ pub(crate) fn scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, St
     for entry in WalkDir::new(p).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             let path = entry.path();
+            if is_app_data_file(path) { continue; }
             if let Some(ext) = path.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()) {
                 if supported_exts.contains(&ext.as_str()) {
                     let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
@@ -49,6 +57,9 @@ pub(crate) fn scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, St
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn extract_document_snippet(file_path: String) -> Result<String, String> {
     let path = Path::new(&file_path);
+    if is_app_data_file(path) {
+        return Err("Application settings and rename history cannot be processed as documents.".into());
+    }
     if !path.exists() {
         return Err(format!("File does not exist: {}", file_path));
     }

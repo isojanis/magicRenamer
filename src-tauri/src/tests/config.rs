@@ -5,16 +5,16 @@ use crate::test_support::*;
 fn loads_defaults_recovers_malformed_config_and_round_trips_settings() {
     let folder = unique_temp_dir("config");
     let path = folder.join("config.json");
-    let defaults = load_prompt_config_at(&path);
+    let defaults = load_prompt_config_at(&path).unwrap();
     assert_eq!(defaults, PromptConfig::default());
     assert!(path.exists());
 
     fs::write(&path, "not JSON").unwrap();
-    assert_eq!(load_prompt_config_at(&path), PromptConfig::default());
+    assert_eq!(load_prompt_config_at(&path).unwrap(), PromptConfig::default());
     let mut legacy = serde_json::to_value(PromptConfig::default()).unwrap();
     legacy.as_object_mut().unwrap().remove("folder_context_enabled");
     fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-    assert!(load_prompt_config_at(&path).folder_context_enabled);
+    assert!(load_prompt_config_at(&path).unwrap().folder_context_enabled);
 
     let saved = PromptConfig {
         system_prompt: "system".into(),
@@ -25,7 +25,7 @@ fn loads_defaults_recovers_malformed_config_and_round_trips_settings() {
         ..Default::default()
     };
     save_prompt_config_at(&path, &saved).unwrap();
-    assert_eq!(load_prompt_config_at(&path), saved);
+    assert_eq!(load_prompt_config_at(&path).unwrap(), saved);
     assert!(save_prompt_config_at(&folder.join("missing/config.json"), &saved).is_err());
     remove_temp_dir(&folder);
 }
@@ -104,7 +104,7 @@ fn api_keys_round_trip_only_through_ignored_local_file() {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(folder.join("config.local.json")).unwrap().permissions().mode() & 0o777, 0o600);
     }
-    assert_eq!(load_prompt_config_at(&path).openai_api_key, "private-key-value");
+    assert_eq!(load_prompt_config_at(&path).unwrap().openai_api_key, "private-key-value");
     save_prompt_config_at(&path, &PromptConfig::default()).unwrap();
     assert!(!folder.join("config.local.json").exists());
     remove_temp_dir(&folder);
@@ -118,7 +118,7 @@ fn legacy_inline_keys_migrate_out_of_config_json() {
         openai_api_key: "legacy-key-value".into(), ..Default::default()
     };
     fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
-    assert_eq!(load_prompt_config_at(&path).openai_api_key, "legacy-key-value");
+    assert_eq!(load_prompt_config_at(&path).unwrap().openai_api_key, "legacy-key-value");
     assert!(!fs::read_to_string(&path).unwrap().contains("legacy-key-value"));
     assert!(folder.join("config.local.json").exists());
     remove_temp_dir(&folder);
@@ -131,9 +131,69 @@ fn malformed_public_config_keeps_saved_api_keys() {
     let config = PromptConfig { openai_api_key: "preserve-me".into(), ..Default::default() };
     save_prompt_config_at(&path, &config).unwrap();
     fs::write(&path, "broken JSON").unwrap();
-    let recovered = load_prompt_config_at(&path);
+    let recovered = load_prompt_config_at(&path).unwrap();
     assert_eq!(recovered.openai_api_key, "preserve-me");
     assert!(!fs::read_to_string(&path).unwrap().contains("preserve-me"));
     assert!(folder.join("config.local.json").exists());
+    remove_temp_dir(&folder);
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_reads_and_writes_reject_symlinks_without_touching_the_target() {
+    use std::os::unix::fs::symlink;
+    let folder = unique_temp_dir("config-symlinks");
+    let outside = unique_temp_dir("config-symlink-target");
+    let target = outside.join("keep.json");
+    fs::write(&target, "protected data").unwrap();
+    let config_path = folder.join("config.json");
+    symlink(&target, &config_path).unwrap();
+    assert!(load_prompt_config_at(&config_path).is_err());
+    assert!(save_prompt_config_at(&config_path, &PromptConfig::default()).is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "protected data");
+    fs::remove_file(&config_path).unwrap();
+
+    fs::write(&config_path, serde_json::to_string(&PromptConfig::default()).unwrap()).unwrap();
+    let key_path = folder.join("config.local.json");
+    symlink(&target, &key_path).unwrap();
+    assert!(load_prompt_config_at(&config_path).is_err());
+    let with_key = PromptConfig { openai_api_key: "synthetic-key".into(), ..Default::default() };
+    assert!(save_prompt_config_at(&config_path, &with_key).is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "protected data");
+    remove_temp_dir(&folder);
+    remove_temp_dir(&outside);
+}
+
+#[test]
+fn explicit_import_moves_legacy_settings_and_keys_without_reading_the_working_directory() {
+    let legacy = unique_temp_dir("legacy-import-source");
+    let private = unique_temp_dir("legacy-import-destination");
+    let source = legacy.join("config.json");
+    let destination = private.join("config.json");
+    let config = PromptConfig {
+        provider: "openai".into(), model: "gpt-4o-mini".into(),
+        openai_api_key: "old-inline-key".into(), ..Default::default()
+    };
+    fs::write(&source, serde_json::to_string(&config).unwrap()).unwrap();
+    fs::write(legacy.join("config.local.json"), r#"{"openai_api_key":"separate-key"}"#).unwrap();
+    let imported = import_prompt_config_at(&source, &destination).unwrap();
+    assert_eq!(imported.openai_api_key, "separate-key");
+    assert_eq!(load_prompt_config_at(&destination).unwrap().provider, "openai");
+    assert!(!fs::read_to_string(&destination).unwrap().contains("separate-key"));
+    assert_eq!(fs::read_to_string(&source).unwrap(), serde_json::to_string(&config).unwrap());
+    assert!(import_prompt_config_at(&legacy.join("other.json"), &destination).is_err());
+    remove_temp_dir(&legacy);
+    remove_temp_dir(&private);
+}
+
+#[test]
+fn malformed_key_file_does_not_rewrite_legacy_inline_credentials() {
+    let folder = unique_temp_dir("malformed-keys");
+    let path = folder.join("config.json");
+    let legacy = PromptConfig { openai_api_key: "legacy-secret".into(), ..Default::default() };
+    fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
+    fs::write(folder.join("config.local.json"), "invalid JSON").unwrap();
+    assert!(load_prompt_config_at(&path).is_err());
+    assert!(fs::read_to_string(&path).unwrap().contains("legacy-secret"));
     remove_temp_dir(&folder);
 }

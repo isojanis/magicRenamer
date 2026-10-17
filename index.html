@@ -33,7 +33,7 @@
           <button id="btn-close-modal" class="btn-icon">&times;</button>
         </div>
         <div class="modal-body">
-          <p class="modal-hint">Settings are saved in <code>config.json</code>; API keys are saved in the ignored <code>config.local.json</code>. Cloud providers receive document excerpts and naming context when you process a file.</p>
+          <p class="modal-hint">Settings are saved in your private MagicRenamer settings folder; API keys are kept in a separate file there. Cloud providers receive document excerpts and naming context when you process a file.</p>
           <div class="field-row provider-settings">
             <div class="field-group flex-1">
               <div class="setting-label-row">
@@ -41,7 +41,7 @@
                 <span class="setting-help" role="img" tabindex="0" title="Choose local Ollama or a cloud API for filename suggestions." aria-label="Help for AI Provider: Choose local Ollama or a cloud API for filename suggestions.">?</span>
               </div>
               <select id="cfg-provider">
-                <option value="ollama">Ollama (Local)</option>
+                <option value="ollama">Ollama</option>
                 <option value="openai">OpenAI</option>
                 <option value="gemini">Google Gemini</option>
                 <option value="anthropic">Anthropic Claude</option>
@@ -60,7 +60,7 @@
           <div id="cloud-credentials" class="field-group hidden">
             <div class="setting-label-row">
               <label for="cfg-api-key">API Key</label>
-              <span class="setting-help" role="img" tabindex="0" title="The key is saved in local config.local.json and sent to the selected provider. Leave blank to keep the saved key." aria-label="Help for API Key: The key stays in local config.local.json. Leave blank to keep the saved key.">?</span>
+              <span class="setting-help" role="img" tabindex="0" title="The key is saved in your private MagicRenamer settings folder and sent to the selected provider. Leave blank to keep the saved key." aria-label="Help for API Key: The key stays in your private settings folder. Leave blank to keep the saved key.">?</span>
             </div>
             <input type="password" id="cfg-api-key" autocomplete="new-password" placeholder="Leave blank to keep saved key" />
             <small id="cfg-key-status" class="setting-note"></small>
@@ -130,7 +130,10 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button id="btn-reset-prompt" class="btn secondary">Reset to Default</button>
+          <div class="modal-footer-right">
+            <button id="btn-import-settings" class="btn secondary" type="button" title="Import a previous config.json and its adjacent API key file">Import Previous Settings</button>
+            <button id="btn-reset-prompt" class="btn secondary" type="button">Reset to Default</button>
+          </div>
           <div class="modal-footer-right">
             <button id="btn-cancel-modal" class="btn secondary">Cancel</button>
             <button id="btn-save-modal" class="btn primary">Save Config</button>

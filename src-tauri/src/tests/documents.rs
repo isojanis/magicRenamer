@@ -100,3 +100,39 @@ async fn extracts_snippets_from_real_fixture_files() {
         assert!(snippet.contains(expected_text), "{} did not contain {:?}: {}", relative_path, expected_text, snippet);
     }
 }
+
+#[tokio::test]
+async fn excludes_app_settings_keys_and_history_from_scans_and_extraction() {
+    let folder = unique_temp_dir("private-document-filter");
+    for name in ["config.json", "config.local.json", "rename_history_20261017_1400.json"] {
+        let path = folder.join(name);
+        fs::write(&path, r#"{"openai_api_key":"synthetic-private-key"}"#).unwrap();
+        assert!(extract_document_snippet(path.to_string_lossy().into_owned()).await.is_err(), "{name}");
+    }
+    fs::write(folder.join("invoice.json"), r#"{"invoice":"Invoice 42"}"#).unwrap();
+    let found = scan_folder(folder.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "invoice.json");
+    remove_temp_dir(&folder);
+}
+
+#[tokio::test]
+async fn deeply_nested_pdf_is_rejected_without_aborting_the_process() {
+    let folder = unique_temp_dir("nested-pdf");
+    let path = folder.join("nested.pdf");
+    let mut bytes = b"%PDF-1.4\n".to_vec();
+    let object_offset = bytes.len();
+    bytes.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /X ");
+    bytes.extend(std::iter::repeat_n(b'[', 11_000));
+    bytes.push(b'0');
+    bytes.extend(std::iter::repeat_n(b']', 11_000));
+    bytes.extend_from_slice(b" >>\nendobj\n");
+    let xref_offset = bytes.len();
+    bytes.extend_from_slice(format!(
+        "xref\n0 2\n0000000000 65535 f \n{object_offset:010} 00000 n \ntrailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    ).as_bytes());
+    fs::write(&path, bytes).unwrap();
+    let result = extract_document_snippet(path.to_string_lossy().into_owned()).await;
+    assert!(result.is_err(), "malformed PDF should return an error");
+    remove_temp_dir(&folder);
+}

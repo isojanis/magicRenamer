@@ -85,7 +85,7 @@ pub(crate) async fn suggest_filename_with_ollama(
         model,
         folder_context,
         file_path,
-        load_prompt_config(),
+        load_prompt_config()?,
         "http://localhost:11434/api/generate",
     );
     match processing_run_id {
@@ -241,7 +241,7 @@ async fn query_ai_provider(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn test_ai_provider(config: PromptConfigUpdate) -> Result<String, String> {
-    let config = apply_config_update(load_prompt_config(), config)?;
+    let config = apply_config_update(load_prompt_config()?, config)?;
     test_ai_provider_with_config(&config, None).await
 }
 

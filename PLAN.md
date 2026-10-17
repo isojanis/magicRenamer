@@ -6,7 +6,7 @@
 
 **Key Constraints:**
 
-- **Privacy choice:** Parsing stays local. Ollama inference stays local; cloud inference sends the prepared document excerpt and naming context to the selected provider.
+- **Privacy choice:** Parsing stays local. The default Ollama endpoint is local; a custom Ollama endpoint may be remote. Cloud or remote inference sends the prepared document excerpt and naming context to the selected endpoint.
 - **Portability:** Provide validated release packages for Windows x64, Windows ARM64, Linux DEB, Linux RPM, macOS Apple Silicon, and macOS Intel.
 
 ## 2. Technical Stack
@@ -109,15 +109,16 @@ The UI handles the visual queue and triage workflow.
 - [x] Add a Linux GitHub Actions pipeline for DEB and RPM builds, tests, package metadata and license checks, checksums, and downloadable workflow artifacts.
 - [x] Add a Windows GitHub Actions pipeline for x64 and ARM64 NSIS builds, tests, architecture and version checks, checksums, and downloadable workflow artifacts.
 - [x] Add a macOS GitHub Actions pipeline for Apple Silicon and Intel DMG builds, tests, bundle checks, checksums, and downloadable workflow artifacts.
-- [x] Add manual promotion from verified platform workflow artifacts into a versioned review branch and draft private GitHub Release.
-- [ ] Configure Developer ID signing and Apple notarization, then install and launch each DMG on its target Mac.
-- [ ] Build and test release packages for each target listed below. Store finished packages in the matching `releases/v<version>/` subfolder.
-  - [ ] Windows x64 (`windows-x64/`)
-  - [ ] Windows ARM64 (`windows-arm64/`)
-  - [ ] Linux DEB (`linux-deb/`)
-  - [ ] Linux RPM (`linux-rpm/`)
-  - [ ] macOS Apple Silicon (`macos-apple-silicon/`)
-  - [ ] macOS Intel (`macos-intel/`)
+- [x] Promote the verified `v0.1.2` workflow artifacts into a draft private GitHub Release and merge their review branch into `main`.
+- [x] Build, check package metadata and integrity in CI, and store all six `v0.1.2` packages in `releases/v0.1.2/`:
+  - [x] Windows x64 (`windows-x64/`)
+  - [x] Windows ARM64 (`windows-arm64/`)
+  - [x] Linux DEB (`linux-deb/`)
+  - [x] Linux RPM (`linux-rpm/`)
+  - [x] macOS Apple Silicon (`macos-apple-silicon/`)
+  - [x] macOS Intel (`macos-intel/`)
+- [ ] Install and launch each package on its target platform; test folder selection, extraction, rename, and undo with disposable documents. Record the result for all six targets.
+- [ ] Configure Developer ID signing and Apple notarization, then verify the signed and notarized DMGs on Apple Silicon and Intel Macs before public distribution.
 
 ### Phase 5: Multi-Provider Cloud AI API Support (OpenAI, Gemini, Anthropic, OpenRouter) 🔄 (In Progress)
 - [x] Provider abstraction in Rust backend (`query_ai_provider` dispatcher):
@@ -138,6 +139,20 @@ The UI handles the visual queue and triage workflow.
   - [x] If Ollama is not installed or running, guide the user to start Ollama or configure a cloud provider.
 - [ ] Live provider and packaged-desktop smoke checks with user-provided credentials and platform dependencies.
 
+### Security and compliance follow-up before public release 🔄
+
+The `v0.1.2` review identified the work below. The source fixes marked complete still need new release packages and installed-app smoke checks; existing `v0.1.2` binaries do not contain them.
+
+- [x] **High — prevent credential disclosure through document scanning.** `config.json`, `config.local.json`, and rename-history files are excluded from scans and rejected by direct snippet extraction. A synthetic key regression test covers both paths.
+- [x] **High — stop loading configuration from the working directory.** Settings and keys now live under a per-user `MagicRenamer` configuration directory with owner-only Unix permissions. Reads and atomic writes reject symlink targets. Users can explicitly import old settings and adjacent keys through Settings; the app does not load them from its working directory.
+- [x] **High — patch the PDF parser crash.** `pdf-extract` now resolves to `lopdf 0.42.0`, which addresses RUSTSEC-2026-0187. A deeply nested PDF regression test verifies an error without a process abort.
+- [x] **Important — make network location visible.** A custom remote Ollama endpoint shows a remote badge and its origin in the tooltip; the default loopback endpoint shows local. The frontend tests cover the remote case.
+- [ ] **High — validate fixed source in distributable packages.** Run Linux, Windows, and both macOS architecture workflows, then install and smoke-test the resulting packages before promoting a public release.
+- [ ] **Important — harden untrusted document parsing.** Assess process isolation and resource limits for PDF and Office extraction, and add a timeout or memory boundary where practical.
+- [ ] **Important — evaluate OS credential storage.** Assess platform keychains for saved provider keys and a safe migration from the private settings file.
+- [ ] **Important — reduce script and filesystem privileges.** Set a restrictive Tauri Content Security Policy, remove unused plugin permissions, and authorize selected folders inside backend commands. Add tests for paths outside the selected folder.
+- [ ] **Important — complete dependency license review.** The notice generator permits crates with no collected license text, including `pdf-extract` and `adobe-cmap-parser`. Review the required copyright, permission, and source notices; include missing texts or document reviewed exceptions, then fail notice generation on unresolved omissions.
+- [ ] **Important — update and audit dependencies.** Update Vite/esbuild development dependencies and triage Rust advisories by reachable code path, including `glib`, `rustls`, and `zip`. Add repeatable npm and Rust advisory checks to CI, with documented exceptions for findings that do not affect the packaged app.
 
 ---
 
@@ -217,7 +232,7 @@ The model field accepts a custom ID. OpenAI and OpenRouter use a Chat Completion
 
 ### 3. Privacy and endpoint safeguards
 
-- The app shows a cloud badge when a cloud provider is active. Ollama inference stays local. Cloud inference sends the prepared excerpt, original filename, and optional naming context to the chosen provider.
+- The app shows a cloud badge when a cloud provider is active. The default Ollama endpoint is local; a custom remote Ollama endpoint shows a remote badge and its origin. Cloud inference sends the prepared excerpt, original filename, and optional naming context to the chosen provider.
 - Remote custom endpoints require HTTPS; HTTP is allowed only for localhost. URLs with credentials, query strings, or fragments are rejected. Redirects are disabled so request credentials and document text stay on the selected endpoint.
 - Gemini uses an `x-goog-api-key` header. API keys and provider error bodies are excluded from user-visible errors. API key files use owner-only permissions on Unix.
 - Test Connection sends a small synthetic prompt to the selected provider. A live cloud request may incur a small charge. Desktop smoke checks and live provider checks remain to be done outside the headless test suite.

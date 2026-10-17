@@ -8,7 +8,7 @@ async function invokeTauri(cmd, args) {
   if (isTauriEnv) {
     return await invoke(cmd, args);
   }
-  if (!["save_prompt_config", "test_ai_provider"].includes(cmd)) {
+  if (!["save_prompt_config", "test_ai_provider", "import_prompt_config"].includes(cmd)) {
     console.log(`[Tauri Mock invoke] ${cmd}:`, args);
   }
 
@@ -52,6 +52,9 @@ async function invokeTauri(cmd, args) {
       custom_base_url: "",
       configured_api_keys: { openai: false, gemini: false, anthropic: false, openrouter: false }
     };
+  }
+  if (cmd === "import_prompt_config") {
+    return await invokeTauri("get_prompt_config");
   }
   if (cmd === "save_prompt_config") {
     const { api_key, clear_api_key, ...publicConfig } = args.config;
@@ -97,6 +100,7 @@ const btnCloseModal = document.getElementById("btn-close-modal");
 const btnCancelModal = document.getElementById("btn-cancel-modal");
 const btnSaveModal = document.getElementById("btn-save-modal");
 const btnResetPrompt = document.getElementById("btn-reset-prompt");
+const btnImportSettings = document.getElementById("btn-import-settings");
 const cfgSystemPrompt = document.getElementById("cfg-system-prompt");
 const cfgPromptTemplate = document.getElementById("cfg-prompt-template");
 const cfgModel = document.getElementById("cfg-model");
@@ -514,11 +518,23 @@ function fillModelOptions(target, provider, activeModel) {
 function applyActiveProvider(cfg) {
   const provider = modelChoices[cfg.provider] ? cfg.provider : "ollama";
   fillModelOptions(selectAiModel, provider, cfg.model);
-  providerBadge.textContent = provider === "ollama" ? "Ollama · Local" : `${providerNames[provider]} · Cloud`;
-  providerBadge.classList.toggle("cloud", provider !== "ollama");
-  providerBadge.title = provider === "ollama"
-    ? "Document excerpts stay on this computer for AI suggestions."
-    : `Document excerpts and naming context are sent to ${providerNames[provider]} for AI suggestions.`;
+  let endpoint = null;
+  if (provider === "ollama" && cfg.custom_base_url) {
+    try { endpoint = new URL(cfg.custom_base_url); } catch { /* Backend rejects invalid endpoints. */ }
+  }
+  const ollamaIsRemote = Boolean(cfg.custom_base_url)
+    && (!endpoint || !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname));
+  providerBadge.textContent = provider === "ollama"
+    ? `Ollama · ${ollamaIsRemote ? "Remote" : "Local"}`
+    : `${providerNames[provider]} · Cloud`;
+  providerBadge.classList.toggle("cloud", provider !== "ollama" || Boolean(ollamaIsRemote));
+  providerBadge.title = ollamaIsRemote
+    ? endpoint
+      ? `Document excerpts and naming context are sent to ${endpoint.origin} for AI suggestions.`
+      : "Custom Ollama endpoint is invalid. Check it in Settings."
+    : provider === "ollama"
+      ? "Document excerpts stay on this computer for AI suggestions."
+      : `Document excerpts and naming context are sent to ${providerNames[provider]} for AI suggestions.`;
 }
 
 async function loadConfig() {
@@ -615,6 +631,26 @@ function buildConfigUpdate() {
   };
 }
 
+async function importPreviousSettings() {
+  try {
+    const filePath = await openDialog({
+      multiple: false, directory: false,
+      filters: [{ name: "MagicRenamer settings", extensions: ["json"] }],
+    });
+    if (!filePath) return;
+    btnImportSettings.disabled = true;
+    const imported = await invokeTauri("import_prompt_config", { filePath });
+    currentConfig = imported;
+    applyActiveProvider(imported);
+    openPromptModal();
+    providerTestStatus.textContent = "Settings imported. Review them, then remove the old API key file.";
+  } catch (err) {
+    providerTestStatus.textContent = `Import failed: ${String(err)}`;
+  } finally {
+    btnImportSettings.disabled = false;
+  }
+}
+
 async function savePromptModal() {
   const updated = buildConfigUpdate();
   try {
@@ -662,6 +698,7 @@ btnCloseModal.addEventListener("click", closePromptModal);
 btnCancelModal.addEventListener("click", closePromptModal);
 btnSaveModal.addEventListener("click", savePromptModal);
 btnResetPrompt.addEventListener("click", resetDefaultPrompts);
+btnImportSettings.addEventListener("click", importPreviousSettings);
 btnTestProvider.addEventListener("click", testProviderConnection);
 
 promptModal.addEventListener("click", (e) => {
