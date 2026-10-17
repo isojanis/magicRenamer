@@ -100,10 +100,10 @@ The UI handles the visual queue and triage workflow.
   - [x] Smart excerpts per file format, with a confirmed document date added when it appears beyond the excerpt.
   - [x] Large folder pre-flight warning (>500-1,000 files): Alert user if folder context is enabled, warning that local LLMs may struggle with excessive breadth/variability, and offer one-click toggle to disable context for the run.
   - [x] Pass 2 Context-aware Ollama prompt with structured JSON output (`new_name`, `category`, `reason`).
-- [ ] Original filename preservation:
-  - [ ] Implement extended attributes (`xattrs` on Linux/macOS, ADS on Windows) for zero-mutation local metadata.
-  - [ ] Implement visible timestamped `rename_history_YYYYMMDD_HHMM.json` manifest generation on rename batch.
-  - [ ] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
+- [x] Original filename preservation:
+  - [x] Implement extended attributes (`xattrs` on Linux/macOS, ADS on Windows) for zero-mutation local metadata.
+  - [x] Implement visible timestamped `rename_history_YYYYMMDD_HHMM.json` manifest generation on rename batch.
+  - [x] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
 - [ ] Launch application in dev mode (`npm run tauri dev`) or test binary directly.
 - [ ] Standalone release packaging (`npm run tauri build`).
 

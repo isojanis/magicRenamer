@@ -30,6 +30,9 @@ async function invokeTauri(cmd, args) {
   if (cmd === "rename_file") {
     return true;
   }
+  if (cmd === "undo_rename_file") {
+    return { restored_path: args.filePath, original_name: "original_file.pdf", source: "mock" };
+  }
   if (cmd === "get_prompt_config") {
     return {
       system_prompt: "Use the document and directory context to suggest a concise filename that follows the directory's conventions. Return only valid JSON with string fields new_name, category, and reason. new_name must be a filename, not a path, and retain the target extension.",
@@ -64,6 +67,7 @@ const btnSelectFolder = document.getElementById("btn-select-folder");
 const btnProcessAll = document.getElementById("btn-process-all");
 const btnApproveAll = document.getElementById("btn-approve-all");
 const btnApprove = document.getElementById("btn-approve");
+const btnUndo = document.getElementById("btn-undo");
 const btnSkip = document.getElementById("btn-skip");
 const btnRegenAi = document.getElementById("btn-regen-ai");
 const selectOllamaModel = document.getElementById("select-ollama-model");
@@ -136,6 +140,12 @@ function selectItem(index) {
   textSnippet.value = item.snippet || "";
   activeStatus.textContent = item.status.toUpperCase();
   activeStatus.className = `status-badge ${item.status}`;
+
+  // Enable/disable action buttons
+  btnApprove.disabled = item.status === "renamed";
+  if (btnUndo) {
+    btnUndo.disabled = item.status !== "renamed";
+  }
 
   // Update Right Column Preview
   updatePreview(item);
@@ -268,6 +278,27 @@ async function approveCurrent() {
     alert(`Rename failed: ${err}`);
   }
 }
+
+async function undoCurrent() {
+  if (activeIndex < 0 || activeIndex >= queue.length) return;
+  const item = queue[activeIndex];
+  if (item.status !== "renamed") return;
+
+  try {
+    const res = await invokeTauri("undo_rename_file", { filePath: item.path });
+    if (res && res.restored_path) {
+      item.path = res.restored_path;
+      item.name = res.original_name;
+      item.status = "ready"; // Mark ready so user can re-evaluate or rename again if desired
+      renderQueue();
+      selectItem(activeIndex);
+    }
+  } catch (err) {
+    console.error("Undo failed:", err);
+    alert(`Undo failed: ${err}`);
+  }
+}
+
 
 async function approveAllReady() {
   const readyItems = queue.filter((i) => i.status === "ready");
@@ -496,6 +527,7 @@ loadConfig();
 btnSelectFolder.addEventListener("click", chooseFolder);
 btnProcessAll.addEventListener("click", processAllPending);
 btnApprove.addEventListener("click", approveCurrent);
+if (btnUndo) btnUndo.addEventListener("click", undoCurrent);
 btnApproveAll.addEventListener("click", approveAllReady);
 btnSkip.addEventListener("click", () => {
   if (activeIndex < queue.length - 1) {

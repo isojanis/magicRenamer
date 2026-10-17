@@ -1,6 +1,8 @@
+use chrono::Utc;
 use office_oxide::Document;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -707,13 +709,120 @@ async fn suggest_filename_with_ollama(
     Err(format!("Ollama could not produce a usable filename: {}", last_issue))
 }
 
-/// 3. Safely renames the file on the local filesystem with collision handling.
+const XATTR_ORIGINAL_NAME: &str = "user.magicrenamer.original_name";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RenameMapping {
+    pub current_name: String,
+    pub original_name: String,
+    pub sha256: String,
+    pub renamed_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RenameHistoryManifest {
+    pub version: u32,
+    pub session_timestamp: String,
+    pub mappings: Vec<RenameMapping>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UndoResult {
+    pub restored_path: String,
+    pub original_name: String,
+    pub source: String, // "xattr" or "manifest"
+}
+
+fn compute_file_sha256(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|e| format!("Failed to open file for SHA-256: {}", e))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("Failed to hash file: {}", e))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn set_xattr_original_name(path: &Path, original_name: &str) {
+    // Extended attributes are supported on Linux, macOS, and Windows NTFS
+    let _ = xattr::set(path, XATTR_ORIGINAL_NAME, original_name.as_bytes());
+}
+
+fn get_xattr_original_name(path: &Path) -> Option<String> {
+    xattr::get(path, XATTR_ORIGINAL_NAME)
+        .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
+fn remove_xattr_original_name(path: &Path) {
+    let _ = xattr::remove(path, XATTR_ORIGINAL_NAME);
+}
+
+fn update_or_create_manifest(dir: &Path, mapping: RenameMapping) -> Result<(), String> {
+    // Format: rename_history_YYYYMMDD_HHMM.json
+    let now = Utc::now();
+    let prefix = format!("rename_history_{}", now.format("%Y%m%d_%H%M"));
+
+    // Find if a manifest for the current minute already exists in dir, or create a new one
+    let mut target_manifest_path = dir.join(format!("{}.json", prefix));
+
+    if !target_manifest_path.exists() {
+        // Also check if any manifest was created in the last 15 minutes to group session renames
+        if let Ok(entries) = fs::read_dir(dir) {
+            let mut recent_manifest: Option<std::path::PathBuf> = None;
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("rename_history_") && name.ends_with(".json") {
+                    recent_manifest = Some(entry.path());
+                }
+            }
+            if let Some(m) = recent_manifest {
+                target_manifest_path = m;
+            }
+        }
+    }
+
+    let mut manifest = if target_manifest_path.exists() {
+        let content = fs::read_to_string(&target_manifest_path).unwrap_or_default();
+        serde_json::from_str::<RenameHistoryManifest>(&content).unwrap_or_else(|_| RenameHistoryManifest {
+            version: 1,
+            session_timestamp: now.to_rfc3339(),
+            mappings: Vec::new(),
+        })
+    } else {
+        RenameHistoryManifest {
+            version: 1,
+            session_timestamp: now.to_rfc3339(),
+            mappings: Vec::new(),
+        }
+    };
+
+    // Update existing mapping if current_name matches or append new
+    if let Some(existing) = manifest.mappings.iter_mut().find(|m| m.current_name == mapping.current_name) {
+        *existing = mapping;
+    } else {
+        manifest.mappings.push(mapping);
+    }
+
+    let json_bytes = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    fs::write(&target_manifest_path, json_bytes).map_err(|e| format!("Failed to write manifest: {}", e))?;
+    Ok(())
+}
+
+/// 3. Safely renames the file on the local filesystem with collision handling,
+/// xattr tagging, and manifest recording.
 #[cfg_attr(feature = "desktop", tauri::command)]
 async fn rename_file(old_path: String, new_path: String) -> Result<String, String> {
     let source = Path::new(&old_path);
     if !source.exists() {
         return Err(format!("Source file does not exist: {}", old_path));
     }
+
+    let original_file_name = source
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let sha256_hash = compute_file_sha256(source).unwrap_or_default();
 
     let dest = Path::new(&new_path);
     let mut final_dest = dest.to_path_buf();
@@ -744,8 +853,83 @@ async fn rename_file(old_path: String, new_path: String) -> Result<String, Strin
     }
 
     fs::rename(source, &final_dest).map_err(|e| format!("Failed to rename file: {}", e))?;
+
+    // 1. Tag the file with xattr (zero-mutation local metadata)
+    set_xattr_original_name(&final_dest, &original_file_name);
+
+    // 2. Append to visible session manifest rename_history_YYYYMMDD_HHMM.json
+    if let Some(parent) = final_dest.parent() {
+        let current_file_name = final_dest
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mapping = RenameMapping {
+            current_name: current_file_name,
+            original_name: original_file_name,
+            sha256: sha256_hash,
+            renamed_at: Utc::now().to_rfc3339(),
+        };
+
+        let _ = update_or_create_manifest(parent, mapping);
+    }
+
     Ok(final_dest.to_string_lossy().to_string())
 }
+
+/// Undoes a rename by restoring the original filename from xattr or local directory manifests.
+#[cfg_attr(feature = "desktop", tauri::command)]
+async fn undo_rename_file(file_path: String) -> Result<UndoResult, String> {
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+
+    let parent = path.parent().ok_or_else(|| "File has no parent directory".to_string())?;
+    let current_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+
+    // Priority 1: Check xattr metadata
+    if let Some(orig_name) = get_xattr_original_name(path) {
+        if !orig_name.is_empty() && orig_name != current_name {
+            let target = parent.join(&orig_name);
+            fs::rename(path, &target).map_err(|e| format!("Failed to revert filename: {}", e))?;
+            remove_xattr_original_name(&target);
+            return Ok(UndoResult {
+                restored_path: target.to_string_lossy().to_string(),
+                original_name: orig_name,
+                source: "xattr".to_string(),
+            });
+        }
+    }
+
+    // Priority 2: Check any rename_history_*.json in the parent folder
+    if let Ok(entries) = fs::read_dir(parent) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.starts_with("rename_history_") && fname.ends_with(".json") {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    if let Ok(manifest) = serde_json::from_str::<RenameHistoryManifest>(&content) {
+                        if let Some(mapping) = manifest.mappings.iter().find(|m| m.current_name == current_name) {
+                            let orig_name = mapping.original_name.clone();
+                            let target = parent.join(&orig_name);
+                            fs::rename(path, &target).map_err(|e| format!("Failed to revert filename: {}", e))?;
+                            remove_xattr_original_name(&target);
+                            return Ok(UndoResult {
+                                restored_path: target.to_string_lossy().to_string(),
+                                original_name: orig_name,
+                                source: "manifest".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err("No original filename record found in xattr or rename_history manifests".to_string())
+}
+
 
 #[cfg(test)]
 mod fixture_tests {
@@ -943,6 +1127,57 @@ mod fixture_tests {
             assert!(snippet.contains(expected_text), "{} did not contain {:?}: {}", relative_path, expected_text, snippet);
         }
     }
+
+    #[tokio::test]
+    async fn rename_and_undo_with_manifest_and_xattr() {
+        let temp_dir = std::env::temp_dir().join(format!("magicrenamer-undo-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let test_file = temp_dir.join("original_draft_v1.txt");
+        fs::write(&test_file, "Document content to be hashed and tracked").unwrap();
+
+        let new_file_path = temp_dir.join("2026-10-17_Report_Final.txt");
+
+        // 1. Rename file
+        let renamed_path_str = rename_file(
+            test_file.to_string_lossy().to_string(),
+            new_file_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("rename_file should succeed");
+
+        assert!(Path::new(&renamed_path_str).exists());
+        assert!(!test_file.exists());
+
+        // 2. Verify manifest was created in temp_dir
+        let mut manifest_found = false;
+        if let Ok(entries) = fs::read_dir(&temp_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("rename_history_") && name.ends_with(".json") {
+                    manifest_found = true;
+                    let content = fs::read_to_string(entry.path()).unwrap();
+                    let manifest: RenameHistoryManifest = serde_json::from_str(&content).unwrap();
+                    assert_eq!(manifest.mappings.len(), 1);
+                    assert_eq!(manifest.mappings[0].original_name, "original_draft_v1.txt");
+                    assert_eq!(manifest.mappings[0].current_name, "2026-10-17_Report_Final.txt");
+                    assert!(!manifest.mappings[0].sha256.is_empty());
+                }
+            }
+        }
+        assert!(manifest_found, "rename_history_YYYYMMDD_HHMM.json should be present");
+
+        // 3. Test undo_rename_file
+        let undo_result = undo_rename_file(renamed_path_str)
+            .await
+            .expect("undo_rename_file should revert to original name");
+
+        assert_eq!(undo_result.original_name, "original_draft_v1.txt");
+        assert!(test_file.exists());
+        assert!(!new_file_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -968,6 +1203,7 @@ fn main() {
             extract_document_snippet,
             suggest_filename_with_ollama,
             rename_file,
+            undo_rename_file,
             get_prompt_config,
             save_prompt_config
         ])
