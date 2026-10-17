@@ -563,3 +563,51 @@ test("custom cloud endpoints do not show an invalid Ollama warning", async () =>
     assert.match(badge.title, /https:\/\/api\.example\.test/);
   }
 });
+
+
+test("cancelling settings import keeps the current draft and makes no import request", async () => {
+  const ui = createUi({ dialogResult: null });
+  await ui.flush();
+  await ui.elements.get("btn-prompt-settings").click();
+  ui.elements.get("cfg-model").value = "unsaved-draft";
+  const badgeBefore = ui.elements.get("provider-badge").textContent;
+  await ui.elements.get("btn-import-settings").click();
+  assert.equal(ui.calls.some((call) => call.command === "import_prompt_config"), false);
+  assert.equal(ui.elements.get("cfg-model").value, "unsaved-draft");
+  assert.equal(ui.elements.get("provider-badge").textContent, badgeBefore);
+  assert.equal(ui.elements.get("btn-import-settings").disabled, false);
+});
+
+test("failed settings import preserves the draft and allows a retry", async () => {
+  const ui = createUi({ dialogResult: "/old/config.json", behavior: {
+    import_prompt_config: () => { throw new Error("Previous settings file is not valid JSON."); },
+  } });
+  await ui.flush();
+  await ui.elements.get("btn-prompt-settings").click();
+  ui.elements.get("cfg-model").value = "unsaved-draft";
+  const badgeBefore = ui.elements.get("provider-badge").textContent;
+  await ui.elements.get("btn-import-settings").click();
+  assert.match(ui.elements.get("provider-test-status").textContent, /Import failed.*not valid JSON/);
+  assert.equal(ui.elements.get("cfg-model").value, "unsaved-draft");
+  assert.equal(ui.elements.get("provider-badge").textContent, badgeBefore);
+  assert.equal(ui.elements.get("prompt-modal").classList.contains("hidden"), false);
+  assert.equal(ui.elements.get("btn-import-settings").disabled, false);
+});
+
+test("Ollama privacy badge distinguishes loopback from lookalike remote hosts", async () => {
+  for (const [endpoint, local] of [
+    ["", true], ["http://localhost:11434/api/generate", true],
+    ["http://127.0.0.1:11434/api/generate", true], ["http://[::1]:11434/api/generate", true],
+    ["https://localhost.example.test/api/generate", false],
+  ]) {
+    const ui = createUi({ behavior: { get_prompt_config: () => ({
+      provider: "ollama", model: "test-model", custom_base_url: endpoint,
+    }) } });
+    await ui.flush();
+    const badge = ui.elements.get("provider-badge");
+    assert.equal(badge.textContent, `Ollama · ${local ? "Local" : "Remote"}`, endpoint);
+    assert.equal(badge.classList.contains("cloud"), !local, endpoint);
+    if (local) assert.match(badge.title, /stay on this computer/);
+    else assert.match(badge.title, /https:\/\/localhost\.example\.test/);
+  }
+});

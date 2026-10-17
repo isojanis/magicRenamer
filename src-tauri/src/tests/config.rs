@@ -165,7 +165,7 @@ fn settings_reads_and_writes_reject_symlinks_without_touching_the_target() {
 }
 
 #[test]
-fn explicit_import_moves_legacy_settings_and_keys_without_reading_the_working_directory() {
+fn explicit_import_copies_settings_and_keys_without_modifying_the_source() {
     let legacy = unique_temp_dir("legacy-import-source");
     let private = unique_temp_dir("legacy-import-destination");
     let source = legacy.join("config.json");
@@ -196,4 +196,94 @@ fn malformed_key_file_does_not_rewrite_legacy_inline_credentials() {
     assert!(load_prompt_config_at(&path).is_err());
     assert!(fs::read_to_string(&path).unwrap().contains("legacy-secret"));
     remove_temp_dir(&folder);
+}
+
+#[test]
+fn rejected_imports_preserve_existing_settings_and_keys() {
+    let source_dir = unique_temp_dir("invalid-import-source");
+    let dest_dir = unique_temp_dir("invalid-import-destination");
+    let source = source_dir.join("config.json");
+    let destination = dest_dir.join("config.json");
+    let existing = PromptConfig { openai_api_key: "keep-existing-key".into(), ..Default::default() };
+    save_prompt_config_at(&destination, &existing).unwrap();
+    let before_config = fs::read(&destination).unwrap();
+    let before_keys = fs::read(api_keys_path(&destination)).unwrap();
+    let mut cases = vec!["not JSON".to_string()];
+    for (field, value) in [
+        ("provider", serde_json::json!("unsupported")),
+        ("model", serde_json::json!("  ")),
+        ("temperature", serde_json::json!(3)),
+        ("custom_base_url", serde_json::json!("http://remote.example/request")),
+    ] {
+        let mut config = serde_json::to_value(PromptConfig::default()).unwrap();
+        config[field] = value;
+        cases.push(config.to_string());
+    }
+    for content in cases {
+        fs::write(&source, content).unwrap();
+        assert!(import_prompt_config_at(&source, &destination).is_err());
+        assert_eq!(fs::read(&destination).unwrap(), before_config);
+        assert_eq!(fs::read(api_keys_path(&destination)).unwrap(), before_keys);
+    }
+    fs::write(&source, serde_json::to_string(&PromptConfig::default()).unwrap()).unwrap();
+    fs::write(api_keys_path(&source), "broken key file").unwrap();
+    assert!(import_prompt_config_at(&source, &destination).is_err());
+    assert!(import_prompt_config_at(&destination, &destination).is_err());
+    assert_eq!(fs::read(&destination).unwrap(), before_config);
+    assert_eq!(fs::read(api_keys_path(&destination)).unwrap(), before_keys);
+    remove_temp_dir(&source_dir);
+    remove_temp_dir(&dest_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_writes_reject_a_symlinked_parent_directory() {
+    use std::os::unix::fs::symlink;
+    let folder = unique_temp_dir("settings-parent-link");
+    let outside = unique_temp_dir("settings-parent-target");
+    fs::write(outside.join("config.json"), "do not replace").unwrap();
+    let alias = folder.join("settings");
+    symlink(&outside, &alias).unwrap();
+    assert!(write_private_file(&alias.join("config.json"), "replacement").is_err());
+    assert_eq!(fs::read_to_string(outside.join("config.json")).unwrap(), "do not replace");
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+    remove_temp_dir(&folder);
+    remove_temp_dir(&outside);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn user_settings_ignore_an_untrusted_working_directory() {
+    // Use a child process so changing cwd and environment cannot affect parallel tests.
+    if std::env::var_os("MAGICRENAMER_CONFIG_TEST_CHILD").is_some() {
+        use std::os::unix::fs::PermissionsExt;
+        let expected = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap()).join("MagicRenamer/config.json");
+        assert_eq!(get_config_path().unwrap(), expected);
+        let loaded = load_prompt_config().unwrap();
+        assert_eq!(loaded, PromptConfig::default());
+        assert_eq!(fs::metadata(expected.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        let saved = PromptConfig { openai_api_key: "private-test-key".into(), ..loaded };
+        save_prompt_config_at(&get_config_path().unwrap(), &saved).unwrap();
+        assert_eq!(load_prompt_config().unwrap().openai_api_key, "private-test-key");
+        return;
+    }
+    let folder = unique_temp_dir("untrusted-working-directory");
+    let private = unique_temp_dir("isolated-user-config");
+    let hostile = PromptConfig {
+        custom_base_url: "https://untrusted.example/request".into(),
+        openai_api_key: "untrusted-key".into(), ..Default::default()
+    };
+    let original = serde_json::to_string(&hostile).unwrap();
+    fs::write(folder.join("config.json"), &original).unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "config::tests::user_settings_ignore_an_untrusted_working_directory", "--nocapture"])
+        .current_dir(&folder)
+        .env("MAGICRENAMER_CONFIG_TEST_CHILD", "1")
+        .env("XDG_CONFIG_HOME", &*private)
+        .output().unwrap();
+    assert!(output.status.success(), "child failed: {} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert_eq!(fs::read_to_string(folder.join("config.json")).unwrap(), original);
+    assert!(!folder.join("config.local.json").exists());
+    remove_temp_dir(&folder);
+    remove_temp_dir(&private);
 }
