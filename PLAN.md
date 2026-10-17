@@ -106,6 +106,7 @@ The UI handles the visual queue and triage workflow.
   - [x] Implement visible timestamped `rename_history_YYYYMMDD_HHMM.json` manifest generation on rename batch.
   - [x] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
 - [ ] Launch application in dev mode (`npm run tauri dev`) or test binary directly.
+- [x] Add a Linux GitHub Actions pipeline for DEB and RPM builds, tests, package metadata and license checks, checksums, and downloadable workflow artifacts.
 - [ ] Build and test release packages for each target listed below. Store finished packages in the matching `releases/v<version>/` subfolder.
   - [ ] Windows x64 (`windows-x64/`)
   - [ ] Windows ARM64 (`windows-arm64/`)

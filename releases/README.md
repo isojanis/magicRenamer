@@ -14,3 +14,5 @@ releases/
 ```
 
 These are planned release targets; an empty folder does not mean a package has been built or tested. The `.gitkeep` files retain empty folders in Git. Remove each placeholder when adding a package. Verify the package on its target platform and include the project license and generated third-party notices before publishing it.
+
+The [Linux packages workflow](../.github/workflows/linux-packages.yml) uploads verified DEB and RPM files plus `SHA256SUMS` as a GitHub Actions artifact. After installation checks on Debian and RPM-based systems, copy the packages to the corresponding folders here.

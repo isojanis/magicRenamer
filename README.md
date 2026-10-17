@@ -129,6 +129,8 @@ Before distributing an AppImage or another installer that contains native librar
 
 Tauri writes build outputs under `src-tauri/target/release/bundle/`. Copy each validated release package into its matching folder under [`releases/v0.1.0/`](releases/v0.1.0/) for GitHub publication. The planned targets are Windows x64, Windows ARM64, Linux DEB, Linux RPM, macOS Apple Silicon, and macOS Intel. See [`releases/README.md`](releases/README.md) for the folder layout.
 
+The [Linux packages workflow](.github/workflows/linux-packages.yml) runs manually from GitHub Actions or when a matching `v<version>` tag is pushed. It uses Ubuntu 22.04 to build x86-64 DEB and RPM packages, runs both test suites, verifies package version, architecture, and bundled license files, and uploads the packages with a `SHA256SUMS` file as a workflow artifact. Download that artifact and review the packages on the target distributions before copying them into `releases/v<version>/linux-deb/` and `linux-rpm/`. The workflow does not publish a GitHub Release or commit binaries automatically.
+
 ---
 
 ## Project Structure
