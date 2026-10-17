@@ -127,9 +127,7 @@ The build regenerates `THIRD_PARTY_NOTICES.md` for the Rust host target and bund
 
 Before distributing an AppImage or another installer that contains native libraries, inspect its contents and include the applicable native library licenses and source information. System-provided libraries in other packages have their own distribution terms.
 
-The compiled binaries and installers will be placed under:
-- **Linux:** `src-tauri/target/release/bundle/deb/` or `appimage/`
-- **Windows:** `src-tauri/target/release/bundle/msi/` or `nsis/`
+Tauri writes build outputs under `src-tauri/target/release/bundle/`. Copy each validated release package into its matching folder under [`releases/v0.1.0/`](releases/v0.1.0/) for GitHub publication. The planned targets are Windows x64, Windows ARM64, Linux DEB, Linux RPM, macOS Apple Silicon, and macOS Intel. See [`releases/README.md`](releases/README.md) for the folder layout.
 
 ---
 

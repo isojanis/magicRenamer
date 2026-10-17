@@ -7,7 +7,7 @@
 **Key Constraints:**
 
 - **Privacy choice:** Parsing stays local. Ollama inference stays local; cloud inference sends the prepared document excerpt and naming context to the selected provider.
-- **Portability:** The application must compile into a standalone executable for both Linux and Windows.
+- **Portability:** Provide validated release packages for Windows x64, Windows ARM64, Linux DEB, Linux RPM, macOS Apple Silicon, and macOS Intel.
 
 ## 2. Technical Stack
 
@@ -106,7 +106,13 @@ The UI handles the visual queue and triage workflow.
   - [x] Implement visible timestamped `rename_history_YYYYMMDD_HHMM.json` manifest generation on rename batch.
   - [x] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
 - [ ] Launch application in dev mode (`npm run tauri dev`) or test binary directly.
-- [ ] Standalone release packaging (`npm run tauri build`).
+- [ ] Build and test release packages for each target listed below. Store finished packages in the matching `releases/v<version>/` subfolder.
+  - [ ] Windows x64 (`windows-x64/`)
+  - [ ] Windows ARM64 (`windows-arm64/`)
+  - [ ] Linux DEB (`linux-deb/`)
+  - [ ] Linux RPM (`linux-rpm/`)
+  - [ ] macOS Apple Silicon (`macos-apple-silicon/`)
+  - [ ] macOS Intel (`macos-intel/`)
 
 ### Phase 5: Multi-Provider Cloud AI API Support (OpenAI, Gemini, Anthropic, OpenRouter) 🔄 (In Progress)
 - [x] Provider abstraction in Rust backend (`query_ai_provider` dispatcher):
