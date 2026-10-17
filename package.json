@@ -2,8 +2,10 @@
   "name": "magic-renamer",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/generate_license_notices.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
