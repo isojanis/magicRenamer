@@ -107,6 +107,10 @@ The UI handles the visual queue and triage workflow.
   - [x] Add "Undo Rename" capability reading from `rename_history_*.json` / `xattr`.
 - [ ] Launch application in dev mode (`npm run tauri dev`) or test binary directly.
 - [x] Add a Linux GitHub Actions pipeline for DEB and RPM builds, tests, package metadata and license checks, checksums, and downloadable workflow artifacts.
+- [x] Add a Windows GitHub Actions pipeline for x64 and ARM64 NSIS builds, tests, architecture and version checks, checksums, and downloadable workflow artifacts.
+- [x] Add a macOS GitHub Actions pipeline for Apple Silicon and Intel DMG builds, tests, bundle checks, checksums, and downloadable workflow artifacts.
+- [x] Add manual promotion from verified platform workflow artifacts into a versioned review branch and draft private GitHub Release.
+- [ ] Configure Developer ID signing and Apple notarization, then install and launch each DMG on its target Mac.
 - [ ] Build and test release packages for each target listed below. Store finished packages in the matching `releases/v<version>/` subfolder.
   - [ ] Windows x64 (`windows-x64/`)
   - [ ] Windows ARM64 (`windows-arm64/`)

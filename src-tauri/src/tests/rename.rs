@@ -387,3 +387,23 @@ async fn rename_and_undo_with_manifest_and_xattr() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_ads_tracks_original_name_and_preserves_document_bytes() {
+    let folder = unique_temp_dir("windows-ads");
+    let source = folder.join("original.txt");
+    let destination = folder.join("renamed.txt");
+    fs::write(&source, b"unchanged document bytes").unwrap();
+    let renamed = rename_file(
+        source.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+    ).await.unwrap();
+    assert_eq!(get_xattr_original_name(Path::new(&renamed)).as_deref(), Some("original.txt"));
+    assert_eq!(fs::read(&renamed).unwrap(), b"unchanged document bytes");
+    let undone = undo_rename_file(renamed).await.unwrap();
+    assert_eq!(undone.source, "ads");
+    assert_eq!(fs::read(&source).unwrap(), b"unchanged document bytes");
+    assert_eq!(get_xattr_original_name(&source), None);
+    remove_temp_dir(&folder);
+}

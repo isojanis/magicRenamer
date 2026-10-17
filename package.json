@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "node --test",
-    "test:rust": "python3 test_docs/generate_fixtures.py && cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "test:rust": "python test_docs/generate_fixtures.py && cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
     "test:all": "npm run test && npm run test:rust"
   },
   "devDependencies": {

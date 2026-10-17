@@ -32,7 +32,10 @@ fn validate_original_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
 const XATTR_ORIGINAL_NAME: &str = "user.magicrenamer.original_name";
+#[cfg(windows)]
+const ADS_ORIGINAL_NAME: &str = ":magicrenamer.original_name";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RenameMapping {
@@ -53,7 +56,7 @@ pub struct RenameHistoryManifest {
 pub struct UndoResult {
     pub restored_path: String,
     pub original_name: String,
-    pub source: String, // "xattr" or "manifest"
+    pub source: String, // "xattr" or "ads" or "manifest"
 }
 
 fn compute_file_sha256(path: &Path) -> Result<String, String> {
@@ -63,11 +66,12 @@ fn compute_file_sha256(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+#[cfg(unix)]
 fn set_xattr_original_name(path: &Path, original_name: &str) {
-    // Extended attributes are supported on Linux, macOS, and Windows NTFS
     let _ = xattr::set(path, XATTR_ORIGINAL_NAME, original_name.as_bytes());
 }
 
+#[cfg(unix)]
 fn get_xattr_original_name(path: &Path) -> Option<String> {
     xattr::get(path, XATTR_ORIGINAL_NAME)
         .ok()
@@ -75,8 +79,38 @@ fn get_xattr_original_name(path: &Path) -> Option<String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
+#[cfg(unix)]
 fn remove_xattr_original_name(path: &Path) {
     let _ = xattr::remove(path, XATTR_ORIGINAL_NAME);
+}
+
+#[cfg(windows)]
+fn original_name_stream(path: &Path) -> std::path::PathBuf {
+    let mut stream = path.as_os_str().to_os_string();
+    stream.push(ADS_ORIGINAL_NAME);
+    stream.into()
+}
+
+#[cfg(windows)]
+fn set_xattr_original_name(path: &Path, original_name: &str) {
+    let _ = fs::write(original_name_stream(path), original_name.as_bytes());
+}
+
+#[cfg(windows)]
+fn get_xattr_original_name(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = fs::File::open(original_name_stream(path)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(4097).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > 4096 {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+#[cfg(windows)]
+fn remove_xattr_original_name(path: &Path) {
+    let _ = fs::remove_file(original_name_stream(path));
 }
 
 fn require_regular_file(path: &Path) -> Result<(), String> {
@@ -303,7 +337,7 @@ pub(crate) async fn undo_rename_file(file_path: String) -> Result<UndoResult, St
             return Ok(UndoResult {
                 restored_path: target.to_string_lossy().to_string(),
                 original_name,
-                source: "xattr".to_string(),
+                source: if cfg!(windows) { "ads" } else { "xattr" }.to_string(),
             });
         }
     }
@@ -352,7 +386,7 @@ pub(crate) async fn undo_rename_file(file_path: String) -> Result<UndoResult, St
             });
         }
     }
-    Err("No original filename record found in xattr or rename_history manifests".to_string())
+    Err("No original filename record found in filesystem metadata or rename_history manifests".to_string())
 }
 
 #[cfg(test)]

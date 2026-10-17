@@ -1,0 +1,63 @@
+name: Build Windows packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            folder: windows-x64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            folder: windows-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      MAGIC_RENAMER_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test:all
+
+      - name: Build NSIS installer
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles nsis --ci
+
+      - name: Verify and stage installer
+        id: stage
+        run: node scripts/stage_windows_release.mjs "${{ runner.temp }}" "${{ matrix.target }}"
+
+      - name: Upload installer for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.folder }}-v${{ steps.stage.outputs.version }}
+          path: ${{ runner.temp }}/releases/v${{ steps.stage.outputs.version }}/${{ matrix.folder }}/
+          if-no-files-found: error
+          retention-days: 30

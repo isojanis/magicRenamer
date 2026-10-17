@@ -31,6 +31,8 @@ pdf-extract = "0.7"
 office_oxide = "0.1"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2.5"
-xattr = "1"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1"
