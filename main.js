@@ -519,10 +519,10 @@ function applyActiveProvider(cfg) {
   const provider = modelChoices[cfg.provider] ? cfg.provider : "ollama";
   fillModelOptions(selectAiModel, provider, cfg.model);
   let endpoint = null;
-  if (provider === "ollama" && cfg.custom_base_url) {
+  if (cfg.custom_base_url) {
     try { endpoint = new URL(cfg.custom_base_url); } catch { /* Backend rejects invalid endpoints. */ }
   }
-  const ollamaIsRemote = Boolean(cfg.custom_base_url)
+  const ollamaIsRemote = provider === "ollama" && Boolean(cfg.custom_base_url)
     && (!endpoint || !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname));
   providerBadge.textContent = provider === "ollama"
     ? `Ollama · ${ollamaIsRemote ? "Remote" : "Local"}`
@@ -534,7 +534,7 @@ function applyActiveProvider(cfg) {
       : "Custom Ollama endpoint is invalid. Check it in Settings."
     : provider === "ollama"
       ? "Document excerpts stay on this computer for AI suggestions."
-      : `Document excerpts and naming context are sent to ${providerNames[provider]} for AI suggestions.`;
+      : `Document excerpts and naming context are sent to ${endpoint?.origin || providerNames[provider]} for AI suggestions.`;
 }
 
 async function loadConfig() {

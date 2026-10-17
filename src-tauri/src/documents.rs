@@ -60,8 +60,10 @@ pub(crate) async fn extract_document_snippet(file_path: String) -> Result<String
     if is_app_data_file(path) {
         return Err("Application settings and rename history cannot be processed as documents.".into());
     }
-    if !path.exists() {
-        return Err(format!("File does not exist: {}", file_path));
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect document: {}", error))?;
+    if !metadata.file_type().is_file() {
+        return Err("Only regular files can be processed; symbolic links are not supported.".into());
     }
 
     let ext = path

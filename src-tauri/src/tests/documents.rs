@@ -136,3 +136,17 @@ async fn deeply_nested_pdf_is_rejected_without_aborting_the_process() {
     assert!(result.is_err(), "malformed PDF should return an error");
     remove_temp_dir(&folder);
 }
+
+
+#[cfg(unix)]
+#[tokio::test]
+async fn extraction_rejects_a_symlink_to_private_settings() {
+    use std::os::unix::fs::symlink;
+    let folder = unique_temp_dir("settings-symlink");
+    let target = folder.join("config.local.json");
+    fs::write(&target, r#"{"openai_api_key":"synthetic-secret"}"#).unwrap();
+    let alias = folder.join("report.json");
+    symlink(&target, &alias).unwrap();
+    assert!(extract_document_snippet(alias.to_string_lossy().into_owned()).await.is_err());
+    remove_temp_dir(&folder);
+}

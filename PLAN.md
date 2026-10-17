@@ -143,10 +143,10 @@ The UI handles the visual queue and triage workflow.
 
 The `v0.1.2` review identified the work below. The source fixes marked complete still need new release packages and installed-app smoke checks; existing `v0.1.2` binaries do not contain them.
 
-- [x] **High — prevent credential disclosure through document scanning.** `config.json`, `config.local.json`, and rename-history files are excluded from scans and rejected by direct snippet extraction. A synthetic key regression test covers both paths.
+- [x] **High — prevent credential disclosure through document scanning.** `config.json`, `config.local.json`, and rename-history files are excluded from scans and rejected by direct snippet extraction. Synthetic key regression tests cover both paths and a symbolic link alias; extraction rejects nonregular files.
 - [x] **High — stop loading configuration from the working directory.** Settings and keys now live under a per-user `MagicRenamer` configuration directory with owner-only Unix permissions. Reads and atomic writes reject symlink targets. Users can explicitly import old settings and adjacent keys through Settings; the app does not load them from its working directory.
 - [x] **High — patch the PDF parser crash.** `pdf-extract` now resolves to `lopdf 0.42.0`, which addresses RUSTSEC-2026-0187. A deeply nested PDF regression test verifies an error without a process abort.
-- [x] **Important — make network location visible.** A custom remote Ollama endpoint shows a remote badge and its origin in the tooltip; the default loopback endpoint shows local. The frontend tests cover the remote case.
+- [x] **Important — make network location visible.** A custom remote Ollama endpoint shows a remote badge and its origin in the tooltip; the default loopback endpoint shows local. The frontend tests cover remote Ollama and custom cloud endpoints, including their destination tooltips.
 - [ ] **High — validate fixed source in distributable packages.** Run Linux, Windows, and both macOS architecture workflows, then install and smoke-test the resulting packages before promoting a public release.
 - [ ] **Important — harden untrusted document parsing.** Assess process isolation and resource limits for PDF and Office extraction, and add a timeout or memory boundary where practical.
 - [ ] **Important — evaluate OS credential storage.** Assess platform keychains for saved provider keys and a safe migration from the private settings file.

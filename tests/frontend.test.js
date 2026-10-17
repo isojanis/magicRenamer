@@ -549,3 +549,17 @@ test("imports previous settings through explicit file selection", async () => {
   assert.equal(ui.elements.get("provider-badge").textContent, "OpenAI · Cloud");
   assert.match(ui.elements.get("provider-test-status").textContent, /Settings imported/);
 });
+
+
+test("custom cloud endpoints do not show an invalid Ollama warning", async () => {
+  for (const provider of ["openai", "openrouter"]) {
+    const ui = createUi({ behavior: { get_prompt_config: () => ({
+      provider, model: "test-model", custom_base_url: "https://api.example.test/v1/chat/completions",
+    }) } });
+    await ui.flush();
+    const badge = ui.elements.get("provider-badge");
+    assert.match(badge.textContent, /Cloud/);
+    assert.doesNotMatch(badge.title, /Ollama|invalid/);
+    assert.match(badge.title, /https:\/\/api\.example\.test/);
+  }
+});

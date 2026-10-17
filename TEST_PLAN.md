@@ -4,9 +4,9 @@ This plan covers the implemented desktop workflow in `main.js` and the `src-taur
 
 ## Current baseline
 
-- Rust now has 49 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
+- Rust now has 50 passing headless tests, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
 - `npm run test:rust` generates the ignored fixture corpus before running Rust tests, so a clean checkout does not need manually prepared documents.
-- `tests/frontend.test.js` has sixteen dependency-free workflow checks, a small DOM fake, and mocked Tauri calls. Release staging tests add eight more Node checks, for 24 passing Node tests total. The frontend and headless Rust suites are exposed through `npm run test:all`.
+- `tests/frontend.test.js` has seventeen dependency-free workflow checks, a small DOM fake, and mocked Tauri calls. Release staging tests add eight more Node checks, for 25 passing Node tests total. The frontend and headless Rust suites are exposed through `npm run test:all`.
 - The `v0.1.2` CI runs built and checked all six release packages; the promotion workflow verified their artifacts, saved them under `releases/v0.1.2/`, and created a draft private GitHub Release. Package installation and application smoke checks have not been recorded. Coverage does not yet include every P1 UI interaction or every document format named in the roadmap.
 
 ## Test approach
