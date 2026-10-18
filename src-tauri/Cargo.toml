@@ -10,9 +10,7 @@ edition = "2021"
 default = ["desktop"]
 desktop = [
   "dep:tauri",
-  "dep:tauri-plugin-opener",
   "dep:tauri-plugin-dialog",
-  "dep:tauri-plugin-fs",
 ]
 
 [build-dependencies]
@@ -20,17 +18,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [], optional = true }
-tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
-tauri-plugin-fs = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "7"
 regex = "1"
 reqwest = { version = "0.12", features = ["json"] }
 pdf-extract = "0.12.1"
-office_oxide = "0.1"
-tokio = { version = "1", features = ["full"] }
+office_oxide = "=0.1.13"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 walkdir = "2.5"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

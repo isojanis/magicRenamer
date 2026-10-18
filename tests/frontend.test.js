@@ -126,6 +126,7 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
     calls.push({ command, args });
     if (behavior[command]) return behavior[command](args, calls);
     if (command === "get_prompt_config") return config;
+    if (command === "select_folder") return dialogResult;
     if (command === "scan_folder") return files;
     if (command === "build_directory_blueprint") return "local folder context";
     if (command === "extract_document_snippet") return "Report\nOrganization: Example Lab";
@@ -147,7 +148,6 @@ function createUi({ files = [fixture("report.pdf")], behavior = {}, confirmResul
     localStorage,
     URL,
     invoke,
-    openDialog: async () => dialogResult,
     alert: (message) => alerts.push(String(message)),
     prompt: () => "/docs",
     console: { log() {}, error() {} },
@@ -538,12 +538,12 @@ test("imports previous settings through explicit file selection", async () => {
   };
   const ui = createUi({
     dialogResult: "/old/config.json",
-    behavior: { import_prompt_config: () => imported },
+    behavior: { import_previous_settings: () => imported },
   });
   await ui.flush();
   await ui.elements.get("btn-prompt-settings").click();
   await ui.elements.get("btn-import-settings").click();
-  assert.equal(ui.calls.find((call) => call.command === "import_prompt_config").args.filePath, "/old/config.json");
+  assert.equal(ui.calls.some((call) => call.command === "import_previous_settings"), true);
   assert.equal(ui.elements.get("cfg-system-prompt").value, "imported system");
   assert.equal(ui.elements.get("cfg-provider").value, "openai");
   assert.equal(ui.elements.get("provider-badge").textContent, "OpenAI · Cloud");
@@ -565,14 +565,14 @@ test("custom cloud endpoints do not show an invalid Ollama warning", async () =>
 });
 
 
-test("cancelling settings import keeps the current draft and makes no import request", async () => {
-  const ui = createUi({ dialogResult: null });
+test("cancelling settings import keeps the current draft after the native command returns no file", async () => {
+  const ui = createUi({ behavior: { import_previous_settings: () => null } });
   await ui.flush();
   await ui.elements.get("btn-prompt-settings").click();
   ui.elements.get("cfg-model").value = "unsaved-draft";
   const badgeBefore = ui.elements.get("provider-badge").textContent;
   await ui.elements.get("btn-import-settings").click();
-  assert.equal(ui.calls.some((call) => call.command === "import_prompt_config"), false);
+  assert.equal(ui.calls.some((call) => call.command === "import_previous_settings"), true);
   assert.equal(ui.elements.get("cfg-model").value, "unsaved-draft");
   assert.equal(ui.elements.get("provider-badge").textContent, badgeBefore);
   assert.equal(ui.elements.get("btn-import-settings").disabled, false);
@@ -580,7 +580,7 @@ test("cancelling settings import keeps the current draft and makes no import req
 
 test("failed settings import preserves the draft and allows a retry", async () => {
   const ui = createUi({ dialogResult: "/old/config.json", behavior: {
-    import_prompt_config: () => { throw new Error("Previous settings file is not valid JSON."); },
+    import_previous_settings: () => { throw new Error("Previous settings file is not valid JSON."); },
   } });
   await ui.flush();
   await ui.elements.get("btn-prompt-settings").click();

@@ -49,7 +49,7 @@ export function stageLinuxRelease(destination, {
     ["RPM", rpm, "rpm", ["-qpl", rpm]],
   ]) {
     const contents = query(command, args);
-    for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md"]) {
+    for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSE_TEXTS.md"]) {
       if (!contents.includes(notice)) throw new Error(`${format} is missing bundled ${notice}: ${file}`);
     }
   }

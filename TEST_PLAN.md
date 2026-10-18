@@ -4,24 +4,24 @@ This plan covers the implemented desktop workflow in `main.js` and the `src-taur
 
 ## Current baseline
 
-- Rust now has 53 passing headless tests on Linux, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
+- Rust now has 56 passing headless tests on Linux, including deterministic Ollama HTTP stub cases, config persistence, no-overwrite rename and undo, concurrent manifest updates, SHA-256 verification on manifest undo, rollback, and symlink/path safety. The real local Ollama smoke test remains ignored by default.
 - `npm run test:rust` generates the ignored fixture corpus before running Rust tests, so a clean checkout does not need manually prepared documents.
 - `tests/frontend.test.js` has twenty dependency-free workflow checks, a small DOM fake, and mocked Tauri calls. Release staging tests add eight more Node checks, for 28 passing Node tests total. The frontend and headless Rust suites are exposed through `npm run test:all`.
 - The `v0.1.2` CI runs built and checked all six release packages; the promotion workflow verified their artifacts, saved them under `releases/v0.1.2/`, and created a draft private GitHub Release. Package installation and application smoke checks have not been recorded. Coverage does not yet include every P1 UI interaction or every document format named in the roadmap.
 
 ## Recent security changes: coverage and remaining checks
 
-- Covered: settings/key/history exclusions, direct extraction through a symbolic link, deeply nested PDF rejection, private file permissions, and rejection of symlinked settings files and parent directories.
+- Covered: settings/key/history exclusions, direct extraction through a symbolic link, deeply nested PDF rejection, private file permissions, rejection of symlinked settings files and parent directories, selected-folder path authorization, oversized inputs, and compressed Office archive expansion limits.
 - Covered: successful explicit import, invalid JSON/provider/model/temperature/endpoint and malformed companion keys rejected without changing existing settings or keys; cancelling or failing an import preserves the UI draft.
 - Covered on Linux: an isolated child process launches in an untrusted working directory, ignores its configuration, creates an owner-only per-user settings directory, and saves keys without changing the working directory's files.
 - Covered: local Ollama defaults, IPv4/IPv6 loopback URLs, remote hosts resembling localhost, remote Ollama, and custom cloud endpoint tooltips.
-- Remaining: native import dialog and imported settings after restart on installed Windows/macOS/Linux packages; Windows/macOS configuration paths and permissions; interrupted or failed atomic writes and concurrent settings saves. The frontend tests mock the native dialog and Tauri boundary.
+- Remaining: native import dialog and imported settings after restart on installed Windows/macOS/Linux packages; Windows/macOS configuration paths and permissions; interrupted or failed atomic writes and concurrent settings saves. The frontend tests mock the native dialog command and Tauri boundary. Verify that the new production CSP permits bundled UI actions and Tauri IPC while denying remote scripts and frontend filesystem APIs.
 
 ## Test approach
 
 1. **Rust behavior tests:** Keep pure date, context, excerpt, and filename rules in fast table-driven unit tests. Use per-test temporary directories for commands that read or change files. Make fixture setup explicit so a clean checkout can run the documented command.
 2. **Rust integration tests:** Exercise the scan, extraction, config, rename, manifest, and undo commands through their Rust functions. Give config tests an isolated config path and give Ollama tests an injectable local endpoint or HTTP client. Use a deterministic local HTTP stub for request, response, retry, and error cases; keep the real Ollama check optional.
-3. **Frontend tests:** The first suite uses Node's built-in test runner and a small DOM fake, with mocked Tauri invoke and folder-dialog calls. Test observable queue state, rendered details, button state, and calls to the backend. Move to a real DOM runner if the fake stops representing browser behavior reliably.
+3. **Frontend tests:** The first suite uses Node's built-in test runner and a small DOM fake, with mocked Tauri invoke calls. Test observable queue state, rendered details, button state, and calls to the backend. Move to a real DOM runner if the fake stops representing browser behavior reliably.
 4. **Desktop smoke checks:** On each release target, install and launch its package, then use disposable fixture copies to select a folder, extract text, rename, and undo. Check filesystem history behavior on each platform and include an optional local Ollama run. Never rename the source fixture corpus during smoke checks. For macOS public distribution, separately verify Developer ID signing and notarization on both architectures.
 
 ## Feature coverage matrix

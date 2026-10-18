@@ -16,10 +16,10 @@ function packages() {
   writeFileSync(join(bundleRoot, "rpm", `MagicRenamer-${version}.x86_64.rpm`), "rpm package contents");
   const query = (command, args) => {
     if (command === "dpkg-deb") {
-      if (args[0] === "--contents") return "/usr/lib/magicrenamer/licenses/LICENSE-MagicRenamer\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_NOTICES.md";
+      if (args[0] === "--contents") return "/usr/lib/magicrenamer/licenses/LICENSE-MagicRenamer\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_NOTICES.md\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_LICENSE_TEXTS.md";
       return args[2] === "Architecture" ? "amd64" : version;
     }
-    if (args[0] === "-qpl") return "/usr/lib/magicrenamer/licenses/LICENSE-MagicRenamer\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_NOTICES.md";
+    if (args[0] === "-qpl") return "/usr/lib/magicrenamer/licenses/LICENSE-MagicRenamer\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_NOTICES.md\n/usr/lib/magicrenamer/licenses/THIRD_PARTY_LICENSE_TEXTS.md";
     return args[2] === "%{ARCH}" ? "x86_64" : version;
   };
   return { temp, bundleRoot, query, version };

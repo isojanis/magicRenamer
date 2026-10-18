@@ -70,7 +70,6 @@ async fn run_for_processing_run<T>(processing_run_id: u64, work: impl Future<Out
 }
 
 /// Suggests a filename for one document using its content and only matching sibling names.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn suggest_filename_with_ollama(
     text_snippet: String,
     extension: String,

@@ -19,7 +19,17 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self'",
+        "img-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'"
+      }
     }
   },
   "bundle": {
@@ -28,7 +38,8 @@
     "licenseFile": "../LICENSE",
     "resources": {
       "../LICENSE": "licenses/LICENSE-MagicRenamer",
-      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"
+      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../THIRD_PARTY_LICENSE_TEXTS.md": "licenses/THIRD_PARTY_LICENSE_TEXTS.md"
     }
   }
 }

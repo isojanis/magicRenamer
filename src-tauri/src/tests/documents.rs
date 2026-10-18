@@ -47,6 +47,38 @@ async fn rejects_unreadable_or_unsupported_documents() {
     remove_temp_dir(&folder);
 }
 
+#[tokio::test]
+async fn rejects_oversized_document_before_parsing() {
+    let folder = unique_temp_dir("large-document");
+    let path = folder.join("large.pdf");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(25 * 1024 * 1024 + 1).unwrap();
+    let error = extract_document_snippet(path.to_string_lossy().into_owned()).await.unwrap_err();
+    assert!(error.contains("25 MiB"), "{error}");
+    remove_temp_dir(&folder);
+}
+
+#[tokio::test]
+async fn rejects_compressed_office_archive_with_large_entry() {
+    use std::io::Write;
+    let folder = unique_temp_dir("large-office-entry");
+    let path = folder.join("large.docx");
+    let file = fs::File::create(&path).unwrap();
+    let mut archive = zip::ZipWriter::new(file);
+    archive.start_file(
+        "word/document.xml",
+        zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated),
+    ).unwrap();
+    let block = vec![b'X'; 1024 * 1024];
+    for _ in 0..26 { archive.write_all(&block).unwrap(); }
+    archive.finish().unwrap();
+    assert!(fs::metadata(&path).unwrap().len() < 25 * 1024 * 1024);
+    let error = extract_document_snippet(path.to_string_lossy().into_owned()).await.unwrap_err();
+    assert!(error.contains("archive entry"), "{error}");
+    remove_temp_dir(&folder);
+}
+
 #[test]
 fn recursively_scans_the_large_nested_fixture_batch() {
     let files = scan_folder(fixture("large-batch")).expect("fixture folder should scan");

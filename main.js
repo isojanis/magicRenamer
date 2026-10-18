@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 // Check if running in Tauri desktop environment
 const isTauriEnv = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
@@ -8,11 +7,12 @@ async function invokeTauri(cmd, args) {
   if (isTauriEnv) {
     return await invoke(cmd, args);
   }
-  if (!["save_prompt_config", "test_ai_provider", "import_prompt_config"].includes(cmd)) {
+  if (!["save_prompt_config", "test_ai_provider", "import_previous_settings"].includes(cmd)) {
     console.log(`[Tauri Mock invoke] ${cmd}:`, args);
   }
 
   // Mock responses for development preview outside Tauri runtime
+  if (cmd === "select_folder") return "/mock";
   if (cmd === "scan_folder") {
     return [
       { name: "scan_001.pdf", path: "/mock/scan_001.pdf", extension: "pdf", size_bytes: 142000 },
@@ -53,7 +53,7 @@ async function invokeTauri(cmd, args) {
       configured_api_keys: { openai: false, gemini: false, anthropic: false, openrouter: false }
     };
   }
-  if (cmd === "import_prompt_config") {
+  if (cmd === "import_previous_settings") {
     return await invokeTauri("get_prompt_config");
   }
   if (cmd === "save_prompt_config") {
@@ -459,11 +459,7 @@ async function chooseFolder() {
 
   if (isTauriEnv) {
     try {
-      selectedFolder = await openDialog({
-        directory: true,
-        multiple: false,
-        title: "Select Folder to Triage",
-      });
+      selectedFolder = await invokeTauri("select_folder");
     } catch (err) {
       console.error("Failed opening native dialog:", err);
     }
@@ -633,13 +629,9 @@ function buildConfigUpdate() {
 
 async function importPreviousSettings() {
   try {
-    const filePath = await openDialog({
-      multiple: false, directory: false,
-      filters: [{ name: "MagicRenamer settings", extensions: ["json"] }],
-    });
-    if (!filePath) return;
     btnImportSettings.disabled = true;
-    const imported = await invokeTauri("import_prompt_config", { filePath });
+    const imported = await invokeTauri("import_previous_settings");
+    if (!imported) return;
     currentConfig = imported;
     applyActiveProvider(imported);
     openPromptModal();

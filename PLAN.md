@@ -25,9 +25,7 @@ The Rust backend is responsible for file ingestion, text extraction, and coordin
 
 - `tauri` (v2)
 - `tauri-plugin-dialog` (v2)
-- `tauri-plugin-fs` (v2)
-- `tauri-plugin-opener` (v2)
-- `pdf-extract` (v0.7)
+- `pdf-extract` (v0.12)
 - `office_oxide` (v0.1)
 - `reqwest` (v0.12 with `json` feature)
 - `serde` & `serde_json`
@@ -148,11 +146,12 @@ The `v0.1.2` review identified the work below. The source fixes marked complete 
 - [x] **High — patch the PDF parser crash.** `pdf-extract` now resolves to `lopdf 0.42.0`, which addresses RUSTSEC-2026-0187. A deeply nested PDF regression test verifies an error without a process abort.
 - [x] **Important — make network location visible.** A custom remote Ollama endpoint shows a remote badge and its origin in the tooltip; the default loopback endpoint shows local. The frontend tests cover remote Ollama and custom cloud endpoints, including their destination tooltips.
 - [ ] **High — validate fixed source in distributable packages.** Run Linux, Windows, and both macOS architecture workflows, then install and smoke-test the resulting packages before promoting a public release.
-- [ ] **Important — harden untrusted document parsing.** Assess process isolation and resource limits for PDF and Office extraction, and add a timeout or memory boundary where practical.
-- [ ] **Important — evaluate OS credential storage.** Assess platform keychains for saved provider keys and a safe migration from the private settings file.
-- [ ] **Important — reduce script and filesystem privileges.** Set a restrictive Tauri Content Security Policy, remove unused plugin permissions, and authorize selected folders inside backend commands. Add tests for paths outside the selected folder.
-- [ ] **Important — complete dependency license review.** The notice generator permits crates with no collected license text, including `pdf-extract` and `adobe-cmap-parser`. Review the required copyright, permission, and source notices; include missing texts or document reviewed exceptions, then fail notice generation on unresolved omissions.
-- [ ] **Important — update and audit dependencies.** Update Vite/esbuild development dependencies and triage Rust advisories by reachable code path, including `glib`, `rustls`, and `zip`. Add repeatable npm and Rust advisory checks to CI, with documented exceptions for findings that do not affect the packaged app.
+- [ ] **Important — harden untrusted document parsing.** Extraction now caps input at 25 MiB, preflights Office ZIP entry and expanded-size limits, runs at most two parser jobs, and returns after 20 seconds. A timed-out parser thread can continue running; process isolation and a hard memory/CPU boundary remain open. See `SECURITY.md`.
+- [x] **Important — evaluate OS credential storage.** `SECURITY.md` records the Windows, macOS, and Linux keychain availability and migration requirements. The private settings file remains the current storage until the per-platform migration can be implemented and tested.
+- [x] **Important — reduce frontend privileges.** Enabled a restrictive CSP for bundled assets and Tauri IPC. The window now has only `core:default`; unused opener and frontend filesystem plugins were removed as direct dependencies. Verify the installed UI on each target because this workspace lacks WebKitGTK development libraries.
+- [x] **Important — authorize selected folders in backend commands.** The backend chooses and records the folder through a native dialog, then checks scan, extraction, AI context, rename, and undo paths against its canonical location. Tests reject unselected, outside, and symlink-aliased paths. Installed desktop smoke checks remain open.
+- [ ] **Important — complete dependency license review.** The notice generator permits crates with no collected license text, including `pdf-extract` and `adobe-cmap-parser`. The Linux-target notice index now lists only runtime dependencies (249 Rust crates and one bundled npm package); the full texts ship in a companion file. Five Rust crates still have no collected license file. The optional npm build binaries are absent from the desktop bundle. Run `npm run check:licenses` for the strict release gate. Review required copyright, permission, and source notices; include missing texts or document reviewed exceptions, then fail notice generation on unresolved omissions.
+- [x] **Important — update and audit dependencies.** Vite 8.3.4 removes the reported npm advisories; rustls 0.23.46 fixes the current RustSec findings. Scheduled and pull-request audits cover both lockfiles. `SECURITY.md` documents the glib and ZIP code-path review and three narrow ZIP exceptions. CI execution on the new branch remains to be confirmed.
 
 ---
 

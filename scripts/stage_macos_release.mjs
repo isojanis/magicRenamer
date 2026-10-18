@@ -54,6 +54,7 @@ export function stageMacosRelease(destination, target, {
   const resources = {
     "../LICENSE": "licenses/LICENSE-MagicRenamer",
     "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+    "../THIRD_PARTY_LICENSE_TEXTS.md": "licenses/THIRD_PARTY_LICENSE_TEXTS.md",
   };
   for (const [source, path] of Object.entries(resources)) {
     if (tauriConfig.bundle?.resources?.[source] !== path) throw new Error(`Tauri bundle must include ${path}`);
@@ -70,6 +71,7 @@ export function stageMacosRelease(destination, target, {
     [dmg, name],
     [join(root, "LICENSE"), "LICENSE-MagicRenamer"],
     [join(root, "THIRD_PARTY_NOTICES.md"), "THIRD_PARTY_NOTICES.md"],
+    [join(root, "THIRD_PARTY_LICENSE_TEXTS.md"), "THIRD_PARTY_LICENSE_TEXTS.md"],
   ];
   const checksums = [];
   for (const [source, filename] of files) {

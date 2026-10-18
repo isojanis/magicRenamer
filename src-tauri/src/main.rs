@@ -1,4 +1,5 @@
 mod ai;
+mod authorized_folder;
 mod config;
 mod documents;
 mod naming;
@@ -21,22 +22,22 @@ fn main() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
+        .manage(authorized_folder::AuthorizedFolder::default())
         .invoke_handler(tauri::generate_handler![
-            documents::scan_folder,
-            naming::build_directory_blueprint,
-            documents::extract_document_snippet,
-            ai::suggest_filename_with_ollama,
+            authorized_folder::select_folder,
+            authorized_folder::import_previous_settings,
+            authorized_folder::scan_folder,
+            authorized_folder::build_directory_blueprint,
+            authorized_folder::extract_document_snippet,
+            authorized_folder::suggest_filename_with_ollama,
             ai::begin_processing_run,
             ai::cancel_processing_run,
             ai::test_ai_provider,
-            rename::rename_file,
-            rename::undo_rename_file,
+            authorized_folder::rename_file,
+            authorized_folder::undo_rename_file,
             config::get_prompt_config,
-            config::save_prompt_config,
-            config::import_prompt_config
+            config::save_prompt_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

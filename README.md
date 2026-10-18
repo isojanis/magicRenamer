@@ -123,7 +123,7 @@ To compile standalone desktop bundles for distribution:
 npm run tauri build
 ```
 
-The build regenerates `THIRD_PARTY_NOTICES.md` for the Rust host target and bundles it with `LICENSE`. For a cross-target build, set `MAGIC_RENAMER_TARGET` to the destination Rust target triple before running the build. Commit the regenerated notices and `src-tauri/Cargo.lock` with each release. The notice file links to exact source archives for MPL-licensed crates. If you modify any of those crates, provide the modified source to recipients under MPL 2.0.
+The build regenerates the dependency index in `THIRD_PARTY_NOTICES.md` and full terms in `THIRD_PARTY_LICENSE_TEXTS.md` for the Rust host target. Both files are bundled with `LICENSE`. For a cross-target build, set `MAGIC_RENAMER_TARGET` to the destination Rust target triple before running the build. Commit both generated files and `src-tauri/Cargo.lock` with each release. The index links to exact source archives for MPL-licensed crates. If you modify any of those crates, provide the modified source to recipients under MPL 2.0.
 
 Before distributing an AppImage or another installer that contains native libraries, inspect its contents and include the applicable native library licenses and source information. System-provided libraries in other packages have their own distribution terms.
 
@@ -170,5 +170,5 @@ magicRenamer/
 
 ## License
 
-This project is licensed under the MIT License; see [LICENSE](LICENSE). Dependency licenses and source links are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This project is licensed under the MIT License; see [LICENSE](LICENSE). Dependency licenses and source links are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), with full terms in [THIRD_PARTY_LICENSE_TEXTS.md](THIRD_PARTY_LICENSE_TEXTS.md).
 

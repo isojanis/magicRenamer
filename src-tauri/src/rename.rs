@@ -241,7 +241,6 @@ fn move_file_no_replace(source: &Path, destination: &Path) -> Result<(), std::io
 }
 
 /// Renames a regular file within its folder, preserving existing destinations and recording history.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn rename_file(old_path: String, new_path: String) -> Result<String, String> {
     let source = Path::new(&old_path);
     require_regular_file(source)?;
@@ -318,7 +317,6 @@ fn restore_file_no_replace(path: &Path, target: &Path) -> Result<(), String> {
 }
 
 /// Restores a regular file using its original-name xattr or a verified history mapping.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn undo_rename_file(file_path: String) -> Result<UndoResult, String> {
     let path = Path::new(&file_path);
     require_regular_file(path)?;

@@ -15,7 +15,6 @@ pub struct FilenameSuggestion {
 }
 
 /// Summarizes the selected folder without assuming its files share a document type.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) fn build_directory_blueprint(folder_path: String) -> Result<String, String> {
     let root = Path::new(&folder_path);
     if !root.is_dir() {

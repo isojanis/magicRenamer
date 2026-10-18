@@ -54,7 +54,7 @@ export function preparePrivateRelease(destination, {
       throw new Error(`${name} is too large for regular Git; use Git LFS or release assets only`);
     }
     if (sourceFolder !== "linux") {
-      for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md"]) {
+      for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSE_TEXTS.md"]) {
         const sidecar = join(folder, notice);
         checkSum(folder, notice, notice, sidecar);
       }
@@ -70,7 +70,7 @@ export function preparePrivateRelease(destination, {
     copyFileSync(file, join(target, name));
     copyFileSync(file, join(assets, name));
     if (sourceFolder !== "linux") {
-      for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md"]) {
+      for (const notice of ["LICENSE-MagicRenamer", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSE_TEXTS.md"]) {
         copyFileSync(join(packageFolder, notice), join(target, notice));
       }
     }
@@ -79,6 +79,9 @@ export function preparePrivateRelease(destination, {
   writeFileSync(join(releaseRoot, "SHA256SUMS"), globalChecksums.join("\n") + "\n");
   writeFileSync(join(assets, "SHA256SUMS"), selected.map(({ name, file }) => `${sha256(file)}  ${name}`).join("\n") + "\n");
   copyFileSync(join(root, "LICENSE"), join(assets, "LICENSE-MagicRenamer"));
+  for (const name of ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSE_TEXTS.md"]) {
+    copyFileSync(join(root, name), join(assets, name));
+  }
   if (outputFile) appendFileSync(outputFile, `version=${version}\n`);
   return { releaseRoot, assets, version };
 }

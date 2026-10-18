@@ -2,7 +2,10 @@ use crate::naming::find_document_date;
 use office_oxide::Document;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Semaphore;
+use tokio::time::{timeout, Duration};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -21,7 +24,6 @@ fn is_app_data_file(path: &Path) -> bool {
 }
 
 /// Recursively scans a directory for supported document formats.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) fn scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, String> {
     let p = Path::new(&folder_path);
     if !p.exists() || !p.is_dir() {
@@ -54,9 +56,25 @@ pub(crate) fn scan_folder(folder_path: String) -> Result<Vec<DiscoveredFile>, St
 
 /// 1. Determines file extension, extracts text using pdf-extract, office_oxide, or std::fs,
 /// and truncates it to 500-1000 characters.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub(crate) async fn extract_document_snippet(file_path: String) -> Result<String, String> {
-    let path = Path::new(&file_path);
+    const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
+    static PARSE_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    let slots = PARSE_SLOTS.get_or_init(|| Arc::new(Semaphore::new(2))).clone();
+    let permit = timeout(EXTRACTION_TIMEOUT, slots.acquire_owned()).await
+        .map_err(|_| "Document extraction timed out waiting for a parser.".to_string())?
+        .map_err(|_| "Document parser is unavailable.".to_string())?;
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        extract_document_snippet_sync(PathBuf::from(file_path))
+    });
+    timeout(EXTRACTION_TIMEOUT, task).await
+        .map_err(|_| "Document extraction timed out.".to_string())?
+        .map_err(|_| "Document parser failed unexpectedly.".to_string())?
+}
+
+fn extract_document_snippet_sync(file_path: PathBuf) -> Result<String, String> {
+    const MAX_DOCUMENT_BYTES: u64 = 25 * 1024 * 1024;
+    let path = file_path.as_path();
     if is_app_data_file(path) {
         return Err("Application settings and rename history cannot be processed as documents.".into());
     }
@@ -65,12 +83,19 @@ pub(crate) async fn extract_document_snippet(file_path: String) -> Result<String
     if !metadata.file_type().is_file() {
         return Err("Only regular files can be processed; symbolic links are not supported.".into());
     }
+    if metadata.len() > MAX_DOCUMENT_BYTES {
+        return Err("Document exceeds the 25 MiB extraction limit.".into());
+    }
 
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
+
+    if matches!(ext.as_str(), "docx" | "xlsx") {
+        check_office_archive_limits(path)?;
+    }
 
     let full_text = match ext.as_str() {
         "pdf" => {
@@ -100,6 +125,32 @@ pub(crate) async fn extract_document_snippet(file_path: String) -> Result<String
     } else {
         Ok(snippet)
     }
+}
+
+fn check_office_archive_limits(path: &Path) -> Result<(), String> {
+    const MAX_UNCOMPRESSED_BYTES: u64 = 100 * 1024 * 1024;
+    const MAX_ENTRY_BYTES: u64 = 25 * 1024 * 1024;
+    const MAX_ENTRIES: usize = 10_000;
+    let file = fs::File::open(path).map_err(|error| format!("Could not inspect Office archive: {error}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| format!("Invalid Office archive: {error}"))?;
+    if archive.len() > MAX_ENTRIES {
+        return Err("Office archive has too many entries.".into());
+    }
+    let mut total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)
+            .map_err(|error| format!("Could not inspect Office archive entry: {error}"))?;
+        if entry.size() > MAX_ENTRY_BYTES {
+            return Err("Office archive entry exceeds the 25 MiB extraction limit.".into());
+        }
+        total = total.checked_add(entry.size())
+            .ok_or("Office archive uncompressed size is too large.")?;
+        if total > MAX_UNCOMPRESSED_BYTES {
+            return Err("Office archive exceeds the 100 MiB uncompressed limit.".into());
+        }
+    }
+    Ok(())
 }
 
 fn smart_excerpt(extension: &str, text: &str) -> String {

@@ -51,6 +51,7 @@ export function stageWindowsRelease(destination, target, {
   const expectedResources = {
     "../LICENSE": "licenses/LICENSE-MagicRenamer",
     "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+    "../THIRD_PARTY_LICENSE_TEXTS.md": "licenses/THIRD_PARTY_LICENSE_TEXTS.md",
   };
   for (const [source, destinationPath] of Object.entries(expectedResources)) {
     if (tauriConfig.bundle?.resources?.[source] !== destinationPath) throw new Error(`Tauri bundle must include ${destinationPath}`);
@@ -62,6 +63,7 @@ export function stageWindowsRelease(destination, target, {
     [join(bundleFolder, installerName), installerName],
     [join(root, "LICENSE"), "LICENSE-MagicRenamer"],
     [join(root, "THIRD_PARTY_NOTICES.md"), "THIRD_PARTY_NOTICES.md"],
+    [join(root, "THIRD_PARTY_LICENSE_TEXTS.md"), "THIRD_PARTY_LICENSE_TEXTS.md"],
   ];
   const checksums = [];
   for (const [source, name] of files) {

@@ -36,6 +36,7 @@ test("stages a native Windows installer with notices and checksums", () => {
       assert.equal(readFileSync(join(folder, f.installerName), "utf8"), "installer contents");
       assert.ok(readFileSync(join(folder, "LICENSE-MagicRenamer"), "utf8").includes("MIT License"));
       assert.ok(readFileSync(join(folder, "THIRD_PARTY_NOTICES.md"), "utf8").length > 0);
+      assert.ok(readFileSync(join(folder, "THIRD_PARTY_LICENSE_TEXTS.md"), "utf8").length > 0);
       const checksum = createHash("sha256").update("installer contents").digest("hex");
       assert.ok(readFileSync(join(folder, "SHA256SUMS"), "utf8").includes(`${checksum}  ${f.installerName}`));
     } finally {

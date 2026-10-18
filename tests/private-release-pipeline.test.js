@@ -30,7 +30,7 @@ function fixture() {
     checksums.set(artifact, [...(checksums.get(artifact) ?? []), `${createHash("sha256").update(bytes).digest("hex")}  ${key}`]);
   }
   for (const artifact of ["windows-x64", "windows-arm64", "macos-apple-silicon", "macos-intel"]) {
-    for (const [source, name] of [["LICENSE", "LICENSE-MagicRenamer"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"]]) {
+    for (const [source, name] of [["LICENSE", "LICENSE-MagicRenamer"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"], ["THIRD_PARTY_LICENSE_TEXTS.md", "THIRD_PARTY_LICENSE_TEXTS.md"]]) {
       const file = join(artifactRoot, artifact, name);
       copyFileSync(new URL(`../${source}`, import.meta.url), file);
       const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -53,6 +53,8 @@ test("assembles six checked packages into release folders and draft assets", () 
     }
     assert.equal(readFileSync(join(assets, "SHA256SUMS"), "utf8").trim().split("\n").length, 6);
     assert.ok(existsSync(join(assets, "LICENSE-MagicRenamer")));
+    assert.ok(existsSync(join(assets, "THIRD_PARTY_NOTICES.md")));
+    assert.ok(existsSync(join(assets, "THIRD_PARTY_LICENSE_TEXTS.md")));
   } finally {
     rmSync(f.temp, { recursive: true, force: true });
   }

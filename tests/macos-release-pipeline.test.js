@@ -17,7 +17,7 @@ function fixture(arch, suffix) {
   mkdirSync(join(contents, "Resources", "licenses"), { recursive: true });
   writeFileSync(join(contents, "Info.plist"), "fixture plist");
   writeFileSync(join(contents, "MacOS", "magic-renamer"), "fixture binary");
-  for (const [source, name] of [["LICENSE", "LICENSE-MagicRenamer"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"]]) {
+  for (const [source, name] of [["LICENSE", "LICENSE-MagicRenamer"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"], ["THIRD_PARTY_LICENSE_TEXTS.md", "THIRD_PARTY_LICENSE_TEXTS.md"]]) {
     copyFileSync(new URL(`../${source}`, import.meta.url), join(contents, "Resources", "licenses", name));
   }
   const dmgFolder = join(buildRoot, "bundle", "dmg");
@@ -49,6 +49,7 @@ test("stages verified Apple Silicon and Intel DMGs with bundled notices", () => 
       const checksum = createHash("sha256").update("dmg contents").digest("hex");
       assert.ok(readFileSync(join(folder, "SHA256SUMS"), "utf8").includes(`${checksum}  ${f.dmgName}`));
       assert.ok(readFileSync(join(folder, "LICENSE-MagicRenamer"), "utf8").includes("MIT License"));
+      assert.ok(readFileSync(join(folder, "THIRD_PARTY_LICENSE_TEXTS.md"), "utf8").length > 0);
     } finally {
       rmSync(f.temp, { recursive: true, force: true });
     }
@@ -64,7 +65,7 @@ test("rejects wrong architecture, mismatched tags, and missing bundled notices",
     assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", {
       ...options, refType: "tag", refName: "v99.0.0",
     }), /does not match/);
-    rmSync(join(f.contents, "Resources", "licenses", "THIRD_PARTY_NOTICES.md"));
+    rmSync(join(f.contents, "Resources", "licenses", "THIRD_PARTY_LICENSE_TEXTS.md"));
     assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", options), /missing bundled/);
     rmSync(f.app, { recursive: true });
     assert.throws(() => stageMacosRelease(f.temp, "aarch64-apple-darwin", options), /Missing macOS application bundle/);
