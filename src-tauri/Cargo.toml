@@ -1,6 +1,6 @@
 [package]
 name = "magic-renamer"
-version = "0.1.2"
+version = "0.1.3"
 description = "MagicRenamer - Local AI document triaging and renaming"
 authors = ["isojanis"]
 license = "MIT"

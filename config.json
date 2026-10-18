@@ -2,6 +2,6 @@
   "system_prompt": "Use the document and directory context to suggest a concise filename that follows the directory's conventions. Return only valid JSON with string fields new_name, category, and reason. new_name must be a filename, not a path, and retain the target extension.",
   "prompt_template": "Directory context:\n{folder_context}\n\nTarget extension: .{extension}\nDocument excerpt:\n\"\"\"\n{text_snippet}\n\"\"\"\nReturn JSON with new_name, category, and reason.",
   "model": "qwen2.5-coder:7b",
-  "temperature": 0.2,
+  "temperature": 0.1,
   "folder_context_enabled": true
 }
